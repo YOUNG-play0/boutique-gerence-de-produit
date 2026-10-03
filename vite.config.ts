@@ -56,12 +56,34 @@ export default defineConfig(() => {
                   }
 
                   const systemPrompt =
-                    "Tu es l'assistant d'une petite boutique en Guinée. Réponds en français simple et court. Utilise UNIQUEMENT les chiffres fournis dans le contexte. Si l'information manque, dis-le. Ne fais aucun calcul : cite les chiffres tels quels. Monnaie : GNF.";
+                    "Tu es l'assistant d'une petite boutique en Guinée. Réponds en français simple et court. Utilise UNIQUEMENT les chiffres fournis dans le contexte. Si l'information manque, dis-le. Ne fais aucun calcul : cite les chiffres tels quels. Monnaie : GNF. Les chiffres du contexte actuel sont toujours prioritaires sur ceux cités dans les messages précédents, qui peuvent être périmés.";
                   const userPrompt = `Voici les données chiffrées de la boutique :\n${JSON.stringify(
                     contexte || {},
                     null,
                     2
                   )}\n\nQuestion du gérant de la boutique :\n${question}`;
+
+                  const validatedHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+                  if (Array.isArray(body.historique)) {
+                    const rawHistory = body.historique.slice(-6);
+                    for (const msg of rawHistory) {
+                      if (msg && (msg.role === 'user' || msg.role === 'assistant')) {
+                        const text = (msg.content || msg.texte || '').trim();
+                        if (text) {
+                          validatedHistory.push({
+                            role: msg.role,
+                            content: text.slice(0, 500),
+                          });
+                        }
+                      }
+                    }
+                  }
+
+                  const messagesToSend = [
+                    { role: 'system', content: systemPrompt },
+                    ...validatedHistory,
+                    { role: 'user', content: userPrompt },
+                  ];
 
                   const CANDIDATE_MODELS = [
                     'llama-3.3-70b-versatile',
@@ -83,10 +105,7 @@ export default defineConfig(() => {
                         },
                         body: JSON.stringify({
                           model,
-                          messages: [
-                            { role: 'system', content: systemPrompt },
-                            { role: 'user', content: userPrompt },
-                          ],
+                          messages: messagesToSend,
                           temperature: 0.1,
                           max_tokens: 600,
                         }),
@@ -155,12 +174,13 @@ export default defineConfig(() => {
       },
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico', 'icon.svg'],
+        includeAssets: ['favicon.ico', 'icon.svg', 'apple-touch-icon.png'],
         manifest: {
           id: '/',
           name: 'Boutique Guinée - Caisse & Stock',
           short_name: 'MaBoutique',
           description: 'Caisse mobile, stock automatique et crédit clients pour boutique en Guinée.',
+          lang: 'fr',
           theme_color: '#ea580c',
           background_color: '#fff7ed',
           display: 'standalone',

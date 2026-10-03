@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { X, Package, Check, Layers, Info } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Package, Layers, Info, Camera, Image as ImageIcon, RotateCcw, Trash2, RefreshCw } from 'lucide-react';
 import { ProductWithStock } from '../../types';
 import { createProduct, updateProduct } from '../../services/db';
 import { formatGNF, triggerHaptic } from '../../utils/formatters';
+import { compressProductImage } from '../../utils/imageCompressor';
 
 interface ProductFormModalProps {
   isOpen: boolean;
@@ -21,9 +22,160 @@ const CATEGORIES = [
   'Divers',
 ];
 
-const PRESET_ICONS = ['🍚', '🛢️', '🥛', '🥫', '☕', '🧼', '💧', '🧃', '🥖', '🧂', '📦', '🍪'];
-
 const PACK_LABEL_OPTIONS = ['carton', 'sac', 'paquet', 'caisse'];
+
+interface PhotoUploadFieldProps {
+  label: string;
+  subLabel?: string;
+  photo?: string;
+  fallbackIcon?: string;
+  onPhotoChange: (newPhoto?: string) => void;
+}
+
+const PhotoUploadField: React.FC<PhotoUploadFieldProps> = ({
+  label,
+  subLabel,
+  photo,
+  fallbackIcon,
+  onPhotoChange,
+}) => {
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsCompressing(true);
+      setErrorMsg(null);
+      const compressedDataUrl = await compressProductImage(file);
+      onPhotoChange(compressedDataUrl);
+      triggerHaptic(40);
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Erreur de compression');
+    } finally {
+      setIsCompressing(false);
+      // Reset input value so same file can be re-selected if needed
+      e.target.value = '';
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-baseline justify-between">
+        <label className="text-xs font-bold text-slate-700 block">
+          {label} <span className="font-normal text-slate-400 text-[11px]">(facultative)</span>
+        </label>
+        {subLabel && <span className="text-[11px] text-slate-400">{subLabel}</span>}
+      </div>
+
+      {errorMsg && (
+        <p className="text-[11px] text-rose-600 font-semibold">{errorMsg}</p>
+      )}
+
+      {/* Hidden inputs: One for direct camera (capture="environment"), one for gallery */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleFile}
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFile}
+      />
+
+      {photo ? (
+        /* Preview state with Reprendre & Supprimer */
+        <div className="flex items-center gap-4">
+          <div className="relative w-28 h-28 sm:w-32 sm:h-32 rounded-2xl overflow-hidden border-2 border-amber-500 shadow-md bg-slate-100 flex-shrink-0">
+            <img
+              src={photo}
+              alt={label}
+              className="w-full h-full object-cover"
+              loading="lazy"
+            />
+            {isCompressing && (
+              <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                <RefreshCw className="w-6 h-6 text-white animate-spin" />
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2 flex-1">
+            <button
+              type="button"
+              onClick={() => cameraInputRef.current?.click()}
+              className="w-full py-2 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reprendre</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => galleryInputRef.current?.click()}
+              className="w-full py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-slate-500" />
+              <span>Changer via galerie</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onPhotoChange(undefined)}
+              className="w-full py-1.5 px-3 text-rose-600 hover:bg-rose-50 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Supprimer la photo</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        /* Empty state: big clickable camera square + small gallery button */
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+          <button
+            type="button"
+            onClick={() => cameraInputRef.current?.click()}
+            disabled={isCompressing}
+            className="w-28 h-28 sm:w-32 sm:h-32 rounded-2xl border-2 border-dashed border-amber-300 hover:border-amber-500 bg-amber-50/50 hover:bg-amber-50 transition active:scale-95 flex flex-col items-center justify-center text-center p-2 text-amber-900 group shadow-xs flex-shrink-0"
+          >
+            {isCompressing ? (
+              <RefreshCw className="w-8 h-8 text-amber-600 animate-spin mb-1" />
+            ) : (
+              <Camera className="w-8 h-8 text-amber-600 group-hover:scale-110 transition mb-1" />
+            )}
+            <span className="text-xs font-black">Prendre photo</span>
+            <span className="text-[10px] text-slate-400 font-medium">(Appareil photo)</span>
+          </button>
+
+          <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={() => galleryInputRef.current?.click()}
+              className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1.5 transition active:scale-95"
+            >
+              <ImageIcon className="w-4 h-4 text-slate-500" />
+              <span>Choisir dans la galerie</span>
+            </button>
+
+            <p className="text-[11px] text-slate-400 leading-tight">
+              Sans photo, une icône générique {fallbackIcon ? `« ${fallbackIcon} »` : '📦'} sera utilisée.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   isOpen,
@@ -36,8 +188,11 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   const [category, setCategory] = useState('Alimentation');
   const [alertThreshold, setAlertThreshold] = useState<number>(5);
   const [alertThresholdPacks, setAlertThresholdPacks] = useState<number | ''>('');
-  const [selectedEmoji, setSelectedEmoji] = useState('📦');
   const [barcode, setBarcode] = useState('');
+
+  // Photos
+  const [photo, setPhoto] = useState<string | undefined>(undefined);
+  const [packPhoto, setPackPhoto] = useState<string | undefined>(undefined);
 
   // Carton / Format groupé
   const [hasPack, setHasPack] = useState(false);
@@ -46,10 +201,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   const [packPrice, setPackPrice] = useState<number | ''>(100000);
 
   // Saisie stock initial (création)
-  // Deux champs distincts si carton coché : cartons fermés + unités seules
   const [initialPacks, setInitialPacks] = useState<number | ''>(0);
   const [initialUnits, setInitialUnits] = useState<number | ''>(0);
-  // Saisie stock initial simple si pas de carton
   const [initialSingleStock, setInitialSingleStock] = useState<number | ''>(10);
 
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +218,9 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         productToEdit.alertThresholdPacks !== undefined ? productToEdit.alertThresholdPacks : ''
       );
       setBarcode(productToEdit.barcode || '');
-      setSelectedEmoji(productToEdit.imageUrl || '📦');
+      setPhoto(productToEdit.photo);
+      setPackPhoto(productToEdit.packPhoto);
+
       if (productToEdit.packSize && productToEdit.packPrice) {
         setHasPack(true);
         setPackLabel(productToEdit.packLabel || 'carton');
@@ -87,7 +242,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       setAlertThreshold(5);
       setAlertThresholdPacks('');
       setBarcode('');
-      setSelectedEmoji('📦');
+      setPhoto(undefined);
+      setPackPhoto(undefined);
       setHasPack(false);
       setPackLabel('carton');
       setPackSize(24);
@@ -110,7 +266,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       setError('Veuillez entrer le nom du produit.');
       return;
     }
-    if (price === '' || price <= 0) {
+    if (price === '' || price < 0) {
       setError("Veuillez spécifier un prix à l'unité valide en GNF.");
       return;
     }
@@ -120,8 +276,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         setError("Le nombre d'unités dans un carton doit être d'au moins 2.");
         return;
       }
-      if (!packPrice || Number(packPrice) <= 0) {
-        setError('Le prix du carton doit être supérieur à zéro.');
+      if (packPrice === '' || Number(packPrice) < 0) {
+        setError('Le prix du carton doit être valide.');
         return;
       }
     }
@@ -138,7 +294,9 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         alertThresholdPacks:
           hasPack && alertThresholdPacks !== '' ? Number(alertThresholdPacks) : undefined,
         barcode: barcode.trim() || undefined,
-        imageUrl: selectedEmoji,
+        imageUrl: productToEdit?.imageUrl || '📦',
+        photo: photo || undefined,
+        packPhoto: hasPack && packPhoto ? packPhoto : undefined,
         packLabel: hasPack ? packLabel : undefined,
         packSize: hasPack ? Number(packSize) : undefined,
         packPrice: hasPack ? Number(packPrice) : undefined,
@@ -215,28 +373,14 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             />
           </div>
 
-          {/* Icon / Emoji Selector */}
-          <div>
-            <label className="text-xs font-bold text-slate-700 block mb-1.5">
-              Icône visuelle :
-            </label>
-            <div className="flex gap-2 flex-wrap">
-              {PRESET_ICONS.map((em) => (
-                <button
-                  key={em}
-                  type="button"
-                  onClick={() => setSelectedEmoji(em)}
-                  className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl transition ${
-                    selectedEmoji === em
-                      ? 'bg-amber-500/20 border-2 border-amber-600 scale-105'
-                      : 'bg-slate-100 border border-slate-200 hover:bg-slate-200'
-                  }`}
-                >
-                  {em}
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* Photo du produit (remplace la grille d'icônes) */}
+          <PhotoUploadField
+            label="Photo du produit"
+            subLabel="À l'unité"
+            photo={photo}
+            fallbackIcon={productToEdit?.imageUrl}
+            onPhotoChange={setPhoto}
+          />
 
           {/* Prix à l'unité en GNF (obligatoire) */}
           <div>
@@ -265,18 +409,6 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 GNF
               </span>
             </div>
-            <div className="flex gap-1.5 mt-1.5 overflow-x-auto no-scrollbar py-0.5">
-              {[1000, 5000, 10000, 25000, 50000, 100000].map((pVal) => (
-                <button
-                  key={pVal}
-                  type="button"
-                  onClick={() => setPrice(pVal)}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg text-[11px] font-bold text-slate-700"
-                >
-                  {formatGNF(pVal)}
-                </button>
-              ))}
-            </div>
           </div>
 
           {/* SECTION : VENTE PAR CARTON */}
@@ -295,6 +427,15 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
             {hasPack && (
               <div className="pt-2 border-t border-orange-200/80 space-y-3 animate-in fade-in duration-200">
+                {/* Photo du carton */}
+                <PhotoUploadField
+                  label={`Photo du ${packLabel}`}
+                  subLabel="Format carton"
+                  photo={packPhoto}
+                  fallbackIcon={productToEdit?.imageUrl}
+                  onPhotoChange={setPackPhoto}
+                />
+
                 {/* Format selection */}
                 <div>
                   <label className="text-xs font-bold text-slate-700 block mb-1">
@@ -399,7 +540,6 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
           {!productToEdit && (
             <div className="space-y-3">
               {hasPack ? (
-                /* Cas 1 : Vente en carton cochée -> deux champs séparés : Cartons fermés + Unités seules */
                 <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
                   <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <Layers className="w-4 h-4 text-amber-600" />
@@ -421,7 +561,6 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                           )
                         }
                         className="w-full p-3 text-sm font-bold bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
-                        placeholder="0"
                       />
                     </div>
 
@@ -439,16 +578,14 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                           )
                         }
                         className="w-full p-3 text-sm font-bold bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
-                        placeholder="0"
                       />
                     </div>
                   </div>
                 </div>
               ) : (
-                /* Cas 2 : Vente à l'unité seulement -> champ unique en unités */
                 <div>
                   <label className="text-xs font-bold text-slate-700 block mb-1">
-                    Stock initial (unités) :
+                    Stock initial en rayon (unités seules) :
                   </label>
                   <input
                     type="number"
@@ -466,52 +603,64 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </div>
           )}
 
-          {/* SEUILS D'ALERTE (CRÉATION ET ÉDITION) */}
+          {/* Seuils d'alerte stock */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
             <div>
               <label className="text-xs font-bold text-slate-700 block mb-1">
-                Seuil d'alerte unités seules *
+                Alerte stock bas (unités) :
               </label>
               <input
                 type="number"
                 min="0"
-                required
                 value={alertThreshold}
                 onChange={(e) => setAlertThreshold(Math.max(0, parseInt(e.target.value) || 0))}
-                className="w-full p-3 text-sm font-bold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
+                className="w-full p-3 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500 font-semibold"
               />
             </div>
 
             {hasPack && (
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Seuil d'alerte cartons (facultatif)
+                  Alerte {packLabel}s fermés (facultatif) :
                 </label>
                 <input
                   type="number"
                   min="0"
+                  placeholder="Ex: 2"
                   value={alertThresholdPacks}
                   onChange={(e) =>
                     setAlertThresholdPacks(
                       e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0)
                     )
                   }
-                  placeholder="Ex: 2"
-                  className="w-full p-3 text-sm font-bold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
+                  className="w-full p-3 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500 font-semibold"
                 />
               </div>
             )}
           </div>
 
-          {/* Bouton de soumission */}
+          {/* Code barre ou référence */}
+          <div>
+            <label className="text-xs font-bold text-slate-700 block mb-1">
+              Code barre ou référence (facultatif) :
+            </label>
+            <input
+              type="text"
+              placeholder="Ex: 619240123456"
+              value={barcode}
+              onChange={(e) => setBarcode(e.target.value)}
+              className="w-full p-3 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
+            />
+          </div>
+
+          {/* Submit button */}
           <div className="pt-2">
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-4 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-black text-base shadow-lg shadow-amber-600/30 transition active:scale-98 flex items-center justify-center gap-2"
+              className="w-full py-4 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-amber-600/30 transition flex items-center justify-center gap-2"
             >
-              <Check className="w-5 h-5" />
-              <span>{productToEdit ? 'Enregistrer les modifications' : 'Créer le Produit'}</span>
+              <span>{productToEdit ? 'Enregistrer les modifications' : 'Créer le produit'}</span>
             </button>
           </div>
         </form>

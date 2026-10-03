@@ -42,7 +42,10 @@ import { RegisterShopModal } from './components/auth/RegisterShopModal';
 import { PinLockScreen } from './components/auth/PinLockScreen';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { PWAInstallButton } from './components/pwa/PWAInstallButton';
+import { PWAInstallBanner } from './components/pwa/PWAInstallBanner';
+import { IOSInstallModal } from './components/pwa/IOSInstallModal';
 import { OfflineIndicator } from './components/pwa/OfflineIndicator';
+import { usePWAInstall } from './hooks/usePWAInstall';
 import { triggerHaptic } from './utils/formatters';
 
 type ActiveTab = 'vente' | 'produits' | 'credits' | 'bilan' | 'assistant';
@@ -78,6 +81,18 @@ export default function App() {
 
   // Settings modal
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // PWA Installation Hook
+  const {
+    isInstalled,
+    isIOS,
+    isInstallable,
+    isDismissed,
+    showIOSGuide,
+    setShowIOSGuide,
+    dismiss: dismissInstallBanner,
+    promptInstall,
+  } = usePWAInstall();
 
   // Load all data from IndexedDB
   const refreshAllData = useCallback(async () => {
@@ -146,7 +161,11 @@ export default function App() {
   }, [shopSettings, isLocked, resetInactivityTimer]);
 
   // Cart operations
-  const handleAddToCart = (product: ProductWithStock, unitType: UnitType = 'unit') => {
+  const handleAddToCart = (
+    product: ProductWithStock,
+    unitType: UnitType = 'unit',
+    quantityToAdd: number = 1
+  ) => {
     const isPack = unitType === 'pack';
     const unitPrice = isPack && product.packPrice ? product.packPrice : product.price;
     const packSize = isPack ? product.packSize : undefined;
@@ -160,7 +179,7 @@ export default function App() {
       const currentQty = existing ? existing.quantity : 0;
       const maxAvailable = isPack ? product.stockPacks : product.stockUnits;
 
-      if (currentQty + 1 > maxAvailable) {
+      if (currentQty + quantityToAdd > maxAvailable) {
         triggerHaptic(100);
         return prev;
       }
@@ -168,7 +187,7 @@ export default function App() {
       if (existing) {
         return prev.map((item) =>
           item.product.id === product.id && item.unitType === unitType
-            ? { ...item, quantity: item.quantity + 1 }
+            ? { ...item, quantity: item.quantity + quantityToAdd }
             : item
         );
       }
@@ -177,7 +196,7 @@ export default function App() {
         ...prev,
         {
           product,
-          quantity: 1,
+          quantity: quantityToAdd,
           unitPrice,
           unitType,
           packSize,
@@ -230,10 +249,6 @@ export default function App() {
   const handleCancelSale = async (saleId: string) => {
     await cancelSale(saleId);
     await refreshAllData();
-  };
-
-  const handleProductScanned = (scannedProduct: ProductWithStock, unitType: UnitType) => {
-    handleAddToCart(scannedProduct, unitType);
   };
 
   const handleSaleCompleted = (sale: Sale) => {
@@ -510,7 +525,8 @@ export default function App() {
         isOpen={isScannerOpen}
         onClose={() => setIsScannerOpen(false)}
         products={products}
-        onProductScanned={handleProductScanned}
+        onAddToCart={handleAddToCart}
+        onOpenPack={handleOpenPack}
       />
 
       {/* QR Code Printable Modal */}
@@ -551,8 +567,36 @@ export default function App() {
           onClose={() => setIsSettingsOpen(false)}
           onSettingsUpdated={(newSettings) => setShopSettings(newSettings)}
           onLockScreen={() => setIsLocked(true)}
+          isInstalled={isInstalled}
+          isIOS={isIOS}
+          onInstall={promptInstall}
+          onShowIOSGuide={() => setShowIOSGuide(true)}
         />
       )}
+
+      {/* Invitation d'installation PWA discrète en bas de l'écran */}
+      <PWAInstallBanner
+        isInstalled={isInstalled}
+        isIOS={isIOS}
+        isInstallable={isInstallable}
+        isDismissed={isDismissed}
+        shouldHide={
+          (activeTab === 'vente' && cartItems.length > 0) ||
+          isScannerOpen ||
+          isCartOpen ||
+          isSettingsOpen ||
+          isLocked
+        }
+        onInstall={promptInstall}
+        onShowIOSGuide={() => setShowIOSGuide(true)}
+        onDismiss={dismissInstallBanner}
+      />
+
+      {/* Guide explicatif d'installation pour iPhone / iPad */}
+      <IOSInstallModal
+        isOpen={showIOSGuide}
+        onClose={() => setShowIOSGuide(false)}
+      />
     </div>
   );
 }

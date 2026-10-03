@@ -237,6 +237,7 @@ export const SaleScreen: React.FC<SaleScreenProps> = ({
             const hasPack = !!(product.packSize && product.packSize >= 2);
             const packLabel = product.packLabel || 'carton';
             const displayPrice = isPack && product.packPrice ? product.packPrice : product.price;
+            const displayPhoto = isPack ? (product.packPhoto || product.photo) : product.photo;
 
             // L'onglet Carton ne montre que les cartons fermés disponibles (stockPacks).
             // L'onglet Unité ne montre que les unités seules disponibles (stockUnits).
@@ -270,9 +271,18 @@ export const SaleScreen: React.FC<SaleScreenProps> = ({
                   onClick={() => handleProductTap(product)}
                   className="w-full text-left flex flex-col flex-1 justify-between focus:outline-none"
                 >
-                  {/* Product Image / Emoji */}
-                  <div className="w-full aspect-square max-h-24 sm:max-h-28 rounded-2xl bg-amber-50 flex items-center justify-center text-4xl sm:text-5xl mb-2.5 transition-transform group-hover:scale-105">
-                    {product.imageUrl || '📦'}
+                  {/* Product Image / Photo / Emoji */}
+                  <div className="w-full aspect-square max-h-24 sm:max-h-28 rounded-2xl overflow-hidden bg-amber-50 flex items-center justify-center text-4xl sm:text-5xl mb-2.5 transition-transform group-hover:scale-105 border border-amber-200/60 shadow-xs">
+                    {displayPhoto ? (
+                      <img
+                        src={displayPhoto}
+                        alt={product.name}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <span>{product.imageUrl || '📦'}</span>
+                    )}
                   </div>
 
                   {/* Product Info */}

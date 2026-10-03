@@ -199,6 +199,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               const formatLabel = isPack
                 ? `${item.packLabel || 'Carton'} (${item.packSize} un.)`
                 : 'Unité';
+              const itemPhoto = isPack
+                ? item.product.packPhoto || item.product.photo
+                : item.product.photo;
 
               const prodLive = products.find((p) => p.id === item.product.id);
               const maxAvailable = isPack
@@ -219,8 +222,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <div className="w-11 h-11 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center text-xl flex-shrink-0">
-                        {item.product.imageUrl || '📦'}
+                      <div className="w-11 h-11 rounded-xl overflow-hidden bg-amber-100 border border-amber-200 flex items-center justify-center text-xl flex-shrink-0">
+                        {itemPhoto ? (
+                          <img
+                            src={itemPhoto}
+                            alt={item.product.name}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <span>{item.product.imageUrl || '📦'}</span>
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <h4 className="text-xs font-bold text-slate-900 truncate">

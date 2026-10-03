@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Settings, KeyRound, Check, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { X, Settings, KeyRound, Check, Lock, AlertCircle, CheckCircle2, Download, Smartphone } from 'lucide-react';
 import { ShopSettings } from '../../types';
 import { updateShopSettings, changeShopPin } from '../../services/db';
 import { triggerHaptic } from '../../utils/formatters';
@@ -10,6 +10,10 @@ interface SettingsModalProps {
   onClose: () => void;
   onSettingsUpdated: (newSettings: ShopSettings) => void;
   onLockScreen: () => void;
+  isInstalled?: boolean;
+  isIOS?: boolean;
+  onInstall?: () => void;
+  onShowIOSGuide?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -18,6 +22,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   onSettingsUpdated,
   onLockScreen,
+  isInstalled = false,
+  isIOS = false,
+  onInstall,
+  onShowIOSGuide,
 }) => {
   const [shopName, setShopName] = useState(settings.shopName);
   const [shopOwner, setShopOwner] = useState(settings.shopOwner);
@@ -142,6 +150,59 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <Lock className="w-4 h-4 text-amber-700" />
           <span>Verrouiller la caisse maintenant</span>
         </button>
+
+        {/* Ligne : Installer l'application */}
+        <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                isInstalled
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-amber-600 text-white shadow-xs'
+              }`}
+            >
+              {isInstalled ? (
+                <CheckCircle2 className="w-5 h-5" />
+              ) : (
+                <Smartphone className="w-5 h-5" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-slate-900 leading-tight">
+                Installer l'application
+              </div>
+              <div className="text-[11px] text-slate-500 truncate">
+                {isInstalled
+                  ? 'App déjà installée sur cet appareil'
+                  : 'Accès rapide et mode hors-ligne'}
+              </div>
+            </div>
+          </div>
+
+          {isInstalled ? (
+            <span className="text-[11px] font-black text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full whitespace-nowrap flex items-center gap-1">
+              <Check className="w-3.5 h-3.5" />
+              <span>App déjà installée</span>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                if (isIOS) {
+                  onShowIOSGuide?.();
+                } else if (onInstall) {
+                  onInstall();
+                } else {
+                  onShowIOSGuide?.();
+                }
+              }}
+              className="py-2 px-3 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition whitespace-nowrap flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{isIOS ? 'Comment faire ?' : 'Installer'}</span>
+            </button>
+          )}
+        </div>
 
         {/* Section 1 : Informations de la boutique */}
         <form onSubmit={handleUpdateInfo} className="space-y-3">

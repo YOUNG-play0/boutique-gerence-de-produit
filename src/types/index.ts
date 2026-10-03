@@ -10,7 +10,9 @@ export interface Product {
   name: string;
   price: number; // Prix à l'unité en GNF
   category?: string;
-  imageUrl?: string;
+  imageUrl?: string; // Ancien emoji/icône pour compatibilité
+  photo?: string; // Photo du produit (data URL JPEG compressée)
+  packPhoto?: string; // Photo du carton (data URL JPEG compressée)
   barcode?: string;
   alertThreshold: number; // Seuil d'alerte en unités seules
   // Vente par carton / format groupé
@@ -131,4 +133,18 @@ export interface ShopSettings {
   isConfigured: boolean; // false tant que l'écran d'inscription n'a pas été validé
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface AssistantMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  texte: string;
+  horodatage: string;
+}
+
+export interface AssistantConversation {
+  id: string;
+  titre: string; // 40 premiers caractères de la première question
+  date: string; // ISO string
+  messages: AssistantMessage[];
 }

@@ -11,6 +11,7 @@ import {
   ProductWithStock,
   CustomerWithBalance,
   ShopSettings,
+  AssistantConversation,
   StockMovementType,
   StockSupport,
   CorrectionReason,
@@ -49,6 +50,11 @@ interface BoutiqueDB extends DBSchema {
     value: CustomerDebtEntry;
     indexes: { 'by-customer': string; 'by-date': string };
   };
+  conversations: {
+    key: string;
+    value: AssistantConversation;
+    indexes: { 'by-date': string };
+  };
   settings: {
     key: string;
     value: ShopSettings;
@@ -56,7 +62,7 @@ interface BoutiqueDB extends DBSchema {
 }
 
 const DB_NAME = 'boutique_guinee_db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbPromise: Promise<IDBPDatabase<BoutiqueDB>> | null = null;
 
@@ -102,6 +108,12 @@ export function getDB(): Promise<IDBPDatabase<BoutiqueDB>> {
           const debtStore = db.createObjectStore('customer_debts', { keyPath: 'id' });
           debtStore.createIndex('by-customer', 'customerId');
           debtStore.createIndex('by-date', 'date');
+        }
+
+        // Assistant conversations store
+        if (!db.objectStoreNames.contains('conversations')) {
+          const convStore = db.createObjectStore('conversations', { keyPath: 'id' });
+          convStore.createIndex('by-date', 'date');
         }
 
         // Settings store
@@ -843,4 +855,151 @@ export async function getCreditPaymentsForCustomer(customerId: string): Promise<
 export async function getAllCreditPayments(): Promise<CreditPayment[]> {
   const db = await getDB();
   return db.getAll('credit_payments');
+}
+
+// ----------------- ASSISTANT IA - HISTORIQUE DES CONVERSATIONS -----------------
+
+export async function getAllConversations(): Promise<AssistantConversation[]> {
+  const db = await getDB();
+  const list = await db.getAll('conversations');
+  return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+export async function getConversationById(id: string): Promise<AssistantConversation | undefined> {
+  const db = await getDB();
+  return db.get('conversations', id);
+}
+
+export async function getLastConversation(): Promise<AssistantConversation | null> {
+  const all = await getAllConversations();
+  return all.length > 0 ? all[0] : null;
+}
+
+export async function saveConversation(conv: AssistantConversation): Promise<AssistantConversation> {
+  const db = await getDB();
+  await db.put('conversations', conv);
+  return conv;
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  const db = await getDB();
+  await db.delete('conversations', id);
+}
+
+export async function clearAllConversations(): Promise<void> {
+  const db = await getDB();
+  const tx = db.transaction('conversations', 'readwrite');
+  await tx.store.clear();
+  await tx.done;
+}
+
+// ----------------- SAUVEGARDE & RESTAURATION (EXPORT / IMPORT) -----------------
+
+export interface BackupData {
+  version: number;
+  exportedAt: string;
+  settings: ShopSettings[];
+  products: Product[];
+  stock_movements: StockMovement[];
+  sales: Sale[];
+  customers: Customer[];
+  customer_debts: CustomerDebtEntry[];
+  credit_payments: CreditPayment[];
+  conversations: AssistantConversation[];
+}
+
+export async function generateBackupData(): Promise<{ backup: BackupData; jsonString: string; sizeBytes: number }> {
+  const db = await getDB();
+  const [
+    settings,
+    products,
+    stock_movements,
+    sales,
+    customers,
+    customer_debts,
+    credit_payments,
+    conversations,
+  ] = await Promise.all([
+    db.getAll('settings'),
+    db.getAll('products'),
+    db.getAll('stock_movements'),
+    db.getAll('sales'),
+    db.getAll('customers'),
+    db.getAll('customer_debts'),
+    db.getAll('credit_payments'),
+    db.getAll('conversations'),
+  ]);
+
+  const backup: BackupData = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    settings,
+    products,
+    stock_movements,
+    sales,
+    customers,
+    customer_debts,
+    credit_payments,
+    conversations,
+  };
+
+  const jsonString = JSON.stringify(backup);
+  const sizeBytes = new Blob([jsonString]).size;
+  return { backup, jsonString, sizeBytes };
+}
+
+export async function restoreBackupData(backup: Partial<BackupData>): Promise<void> {
+  const db = await getDB();
+  const tx = db.transaction(
+    [
+      'settings',
+      'products',
+      'stock_movements',
+      'sales',
+      'customers',
+      'customer_debts',
+      'credit_payments',
+      'conversations',
+    ],
+    'readwrite'
+  );
+
+  // Vider les stores avant de restaurer
+  await Promise.all([
+    tx.objectStore('settings').clear(),
+    tx.objectStore('products').clear(),
+    tx.objectStore('stock_movements').clear(),
+    tx.objectStore('sales').clear(),
+    tx.objectStore('customers').clear(),
+    tx.objectStore('customer_debts').clear(),
+    tx.objectStore('credit_payments').clear(),
+    tx.objectStore('conversations').clear(),
+  ]);
+
+  if (backup.settings && Array.isArray(backup.settings)) {
+    for (const item of backup.settings) await tx.objectStore('settings').put(item);
+  }
+  if (backup.products && Array.isArray(backup.products)) {
+    for (const item of backup.products) await tx.objectStore('products').put(item);
+  }
+  if (backup.stock_movements && Array.isArray(backup.stock_movements)) {
+    for (const item of backup.stock_movements) await tx.objectStore('stock_movements').put(item);
+  }
+  if (backup.sales && Array.isArray(backup.sales)) {
+    for (const item of backup.sales) await tx.objectStore('sales').put(item);
+  }
+  if (backup.customers && Array.isArray(backup.customers)) {
+    for (const item of backup.customers) await tx.objectStore('customers').put(item);
+  }
+  if (backup.customer_debts && Array.isArray(backup.customer_debts)) {
+    for (const item of backup.customer_debts) await tx.objectStore('customer_debts').put(item);
+  }
+  if (backup.credit_payments && Array.isArray(backup.credit_payments)) {
+    for (const item of backup.credit_payments) await tx.objectStore('credit_payments').put(item);
+  }
+  if (backup.conversations && Array.isArray(backup.conversations)) {
+    for (const item of backup.conversations) await tx.objectStore('conversations').put(item);
+  }
+
+  await tx.done;
 }

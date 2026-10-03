@@ -107,6 +107,8 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
   const [customerHistoryList, setCustomerHistoryList] = useState<HistoryItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [cancellingDebtId, setCancellingDebtId] = useState<string | null>(null);
+  const [debtToCancel, setDebtToCancel] = useState<CustomerDebtEntry | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   const filteredCustomers = customers.filter(
     (c) =>
@@ -284,18 +286,20 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
     await loadCustomerHistory(customer);
   };
 
-  const handleCancelManualDebtAction = async (debtEntry: CustomerDebtEntry) => {
+  const handleRequestCancelDebt = (debtEntry: CustomerDebtEntry) => {
     if (debtEntry.isCancelled) return;
-    const confirmMsg = `Annuler cette dette de ${formatGNF(debtEntry.amount)} (${
-      debtEntry.note || 'Dette manuelle'
-    }) ?\n\nCette action retirera ce montant de la dette du client tout en conservant la ligne dans l'historique marquée comme annulée.`;
+    setCancelError(null);
+    setDebtToCancel(debtEntry);
+  };
 
-    if (!window.confirm(confirmMsg)) return;
-
+  const handleConfirmCancelDebt = async () => {
+    if (!debtToCancel) return;
     try {
-      setCancellingDebtId(debtEntry.id);
-      await cancelCustomerDebt(debtEntry.id);
+      setCancellingDebtId(debtToCancel.id);
+      setCancelError(null);
+      await cancelCustomerDebt(debtToCancel.id);
       triggerHaptic(70);
+      playSuccessChime();
       onRefreshData();
 
       if (historyCustomer) {
@@ -305,8 +309,9 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
         }
         await loadCustomerHistory(historyCustomer);
       }
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erreur lors de l’annulation');
+      setDebtToCancel(null);
+    } catch (err: unknown) {
+      setCancelError(err instanceof Error ? err.message : 'Erreur lors de l’annulation');
     } finally {
       setCancellingDebtId(null);
     }
@@ -902,7 +907,7 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
                           {!item.isCancelled && (
                             <button
                               type="button"
-                              onClick={() => handleCancelManualDebtAction(item.entry)}
+                              onClick={() => handleRequestCancelDebt(item.entry)}
                               disabled={cancellingDebtId === item.id}
                               className="mt-1 text-[10px] font-bold text-rose-600 hover:text-rose-800 bg-white hover:bg-rose-50 px-2 py-0.5 rounded border border-rose-200 flex items-center gap-1 transition"
                               title="Annuler cette dette saisie par erreur"
@@ -1007,6 +1012,83 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
             >
               Fermer
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Confirmation d'annulation de dette manuelle */}
+      {debtToCancel && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl text-slate-800">
+            <div className="flex items-center gap-2 pb-3 border-b border-slate-100 text-rose-600">
+              <Ban className="w-5 h-5 flex-shrink-0" />
+              <h3 className="text-base font-bold text-slate-900">Annuler cette dette ?</h3>
+            </div>
+
+            {cancelError && (
+              <div className="mt-3 p-3 bg-rose-50 text-rose-700 text-xs font-semibold rounded-xl border border-rose-200 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{cancelError}</span>
+              </div>
+            )}
+
+            <div className="my-4 p-3.5 bg-rose-50/70 border border-rose-200 rounded-2xl space-y-1.5 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">Montant à annuler :</span>
+                <span className="text-base font-black text-rose-700">
+                  {formatGNF(debtToCancel.amount)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">Type :</span>
+                <span className="font-bold text-slate-800">
+                  {debtToCancel.type === 'dette_initiale' ? 'Dette Initiale' : 'Dette Manuelle'}
+                </span>
+              </div>
+              {debtToCancel.note && (
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Note :</span>
+                  <span className="font-semibold text-slate-800">{debtToCancel.note}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center text-[11px] text-slate-400 pt-1">
+                <span>Date d'enregistrement :</span>
+                <span>{formatDateFrench(debtToCancel.date)}</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed mb-4">
+              Ce montant sera <strong>déduit de la dette du client</strong>. La ligne restera visible dans l'historique marquée comme « Annulée ».
+            </p>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDebtToCancel(null);
+                  setCancelError(null);
+                }}
+                disabled={!!cancellingDebtId}
+                className="py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition"
+              >
+                Conserver la dette
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCancelDebt}
+                disabled={!!cancellingDebtId}
+                className="py-3 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded-xl shadow-md transition flex items-center justify-center gap-1.5"
+              >
+                {cancellingDebtId ? (
+                  <span>Annulation...</span>
+                ) : (
+                  <>
+                    <Ban className="w-3.5 h-3.5" />
+                    <span>Confirmer l'annulation</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
