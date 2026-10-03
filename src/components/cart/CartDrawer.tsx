@@ -98,7 +98,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           setIsProcessing(false);
           return;
         }
-        const created = await createCustomer({
+        const { customer: created } = await createCustomer({
           name: newCustName.trim(),
           phone: newCustPhone.trim() || '620 00 00 00',
         });

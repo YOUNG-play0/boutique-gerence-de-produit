@@ -97,8 +97,23 @@ export interface CreditPayment {
   note?: string;
 }
 
+export type CustomerDebtType = 'dette_initiale' | 'dette_manuelle';
+
+export interface CustomerDebtEntry {
+  id: string;
+  customerId: string;
+  customerName: string;
+  amount: number; // in GNF
+  type: CustomerDebtType;
+  date: string; // ISO string
+  note?: string; // ex: "Ancienne dette (carnet)"
+  isCancelled?: boolean;
+}
+
 export interface CustomerWithBalance extends Customer {
   totalCreditPurchases: number;
+  totalManualDebts: number;
+  totalDebts: number; // totalCreditPurchases + totalManualDebts non annulées
   totalPayments: number;
   currentDebt: number;
   lastPurchaseDate?: string;

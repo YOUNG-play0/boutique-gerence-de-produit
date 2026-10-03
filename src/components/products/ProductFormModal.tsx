@@ -253,8 +253,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             <div className="relative">
               <input
                 type="number"
-                step="500"
-                min="100"
+                step="1"
+                min="0"
                 required
                 placeholder="5000"
                 value={price}
@@ -343,8 +343,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                     <div className="relative">
                       <input
                         type="number"
-                        min="100"
-                        step="500"
+                        min="0"
+                        step="1"
                         required={hasPack}
                         value={packPrice}
                         onChange={(e) =>

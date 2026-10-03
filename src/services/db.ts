@@ -6,6 +6,8 @@ import {
   SaleItem,
   Customer,
   CreditPayment,
+  CustomerDebtEntry,
+  CustomerDebtType,
   ProductWithStock,
   CustomerWithBalance,
   ShopSettings,
@@ -42,6 +44,11 @@ interface BoutiqueDB extends DBSchema {
     value: CreditPayment;
     indexes: { 'by-customer': string; 'by-date': string };
   };
+  customer_debts: {
+    key: string;
+    value: CustomerDebtEntry;
+    indexes: { 'by-customer': string; 'by-date': string };
+  };
   settings: {
     key: string;
     value: ShopSettings;
@@ -49,7 +56,7 @@ interface BoutiqueDB extends DBSchema {
 }
 
 const DB_NAME = 'boutique_guinee_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase<BoutiqueDB>> | null = null;
 
@@ -88,6 +95,13 @@ export function getDB(): Promise<IDBPDatabase<BoutiqueDB>> {
           const paymentStore = db.createObjectStore('credit_payments', { keyPath: 'id' });
           paymentStore.createIndex('by-customer', 'customerId');
           paymentStore.createIndex('by-date', 'date');
+        }
+
+        // Customer manual & initial debts store (sans vente)
+        if (!db.objectStoreNames.contains('customer_debts')) {
+          const debtStore = db.createObjectStore('customer_debts', { keyPath: 'id' });
+          debtStore.createIndex('by-customer', 'customerId');
+          debtStore.createIndex('by-date', 'date');
         }
 
         // Settings store
@@ -586,6 +600,11 @@ export async function getAllSales(): Promise<Sale[]> {
   return db.getAll('sales');
 }
 
+export async function getSalesForCustomer(customerId: string): Promise<Sale[]> {
+  const db = await getDB();
+  return db.getAllFromIndex('sales', 'by-customer', customerId);
+}
+
 // ----------------- CLIENTS & CRÉDITS -----------------
 
 export async function getAllCustomers(): Promise<Customer[]> {
@@ -593,12 +612,15 @@ export async function getAllCustomers(): Promise<Customer[]> {
   return db.getAll('customers');
 }
 
-export async function createCustomer(customerData: {
-  name: string;
-  phone: string;
-  address?: string;
-  note?: string;
-}): Promise<Customer> {
+export async function createCustomer(
+  customerData: {
+    name: string;
+    phone: string;
+    address?: string;
+    note?: string;
+  },
+  initialDebt?: number
+): Promise<{ customer: Customer; initialDebtEntry?: CustomerDebtEntry }> {
   const db = await getDB();
   const id = `cust-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   const now = new Date().toISOString();
@@ -613,8 +635,26 @@ export async function createCustomer(customerData: {
     updatedAt: now,
   };
 
-  await db.add('customers', customer);
-  return customer;
+  const tx = db.transaction(['customers', 'customer_debts'], 'readwrite');
+  await tx.objectStore('customers').add(customer);
+
+  let initialDebtEntry: CustomerDebtEntry | undefined;
+  if (initialDebt && initialDebt > 0) {
+    initialDebtEntry = {
+      id: `debt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      customerId: id,
+      customerName: customer.name,
+      amount: Math.round(initialDebt),
+      type: 'dette_initiale',
+      date: now,
+      note: 'Ancienne dette (carnet)',
+      isCancelled: false,
+    };
+    await tx.objectStore('customer_debts').add(initialDebtEntry);
+  }
+
+  await tx.done;
+  return { customer, initialDebtEntry };
 }
 
 export async function updateCustomer(
@@ -637,15 +677,34 @@ export async function updateCustomer(
 
 export async function deleteCustomer(id: string): Promise<void> {
   const db = await getDB();
-  await db.delete('customers', id);
+  const tx = db.transaction(['customers', 'credit_payments', 'customer_debts'], 'readwrite');
+  await tx.objectStore('customers').delete(id);
+
+  // Supprimer également les paiements et dettes liés au client
+  const payIndex = tx.objectStore('credit_payments').index('by-customer');
+  let payCursor = await payIndex.openCursor(id);
+  while (payCursor) {
+    await payCursor.delete();
+    payCursor = await payCursor.continue();
+  }
+
+  const debtIndex = tx.objectStore('customer_debts').index('by-customer');
+  let debtCursor = await debtIndex.openCursor(id);
+  while (debtCursor) {
+    await debtCursor.delete();
+    debtCursor = await debtCursor.continue();
+  }
+
+  await tx.done;
 }
 
 export async function getCustomersWithBalance(): Promise<CustomerWithBalance[]> {
   const db = await getDB();
-  const [customers, sales, payments] = await Promise.all([
+  const [customers, sales, payments, debts] = await Promise.all([
     db.getAll('customers'),
     db.getAll('sales'),
     db.getAll('credit_payments'),
+    db.getAll('customer_debts'),
   ]);
 
   const creditPurchasesMap = new Map<string, { total: number; lastDate?: string }>();
@@ -660,6 +719,19 @@ export async function getCustomersWithBalance(): Promise<CustomerWithBalance[]> 
     }
   }
 
+  // Dettes manuelles et initiales (non annulées)
+  const manualDebtsMap = new Map<string, { total: number; lastDate?: string }>();
+  for (const debt of debts) {
+    if (!debt.isCancelled && debt.customerId) {
+      const current = manualDebtsMap.get(debt.customerId) || { total: 0 };
+      current.total += debt.amount;
+      if (!current.lastDate || debt.date > current.lastDate) {
+        current.lastDate = debt.date;
+      }
+      manualDebtsMap.set(debt.customerId, current);
+    }
+  }
+
   const paymentsMap = new Map<string, number>();
   for (const pay of payments) {
     const current = paymentsMap.get(pay.customerId) || 0;
@@ -668,17 +740,78 @@ export async function getCustomersWithBalance(): Promise<CustomerWithBalance[]> 
 
   return customers.map((c) => {
     const creditInfo = creditPurchasesMap.get(c.id) || { total: 0 };
+    const manualDebtInfo = manualDebtsMap.get(c.id) || { total: 0 };
     const totalPayments = paymentsMap.get(c.id) || 0;
-    const currentDebt = Math.max(0, creditInfo.total - totalPayments);
+
+    const totalDebts = creditInfo.total + manualDebtInfo.total;
+    const currentDebt = Math.max(0, totalDebts - totalPayments);
+
+    // Dernière date entre achats à crédit et dettes manuelles
+    let lastDate = creditInfo.lastDate;
+    if (manualDebtInfo.lastDate && (!lastDate || manualDebtInfo.lastDate > lastDate)) {
+      lastDate = manualDebtInfo.lastDate;
+    }
 
     return {
       ...c,
       totalCreditPurchases: creditInfo.total,
+      totalManualDebts: manualDebtInfo.total,
+      totalDebts,
       totalPayments,
       currentDebt,
-      lastPurchaseDate: creditInfo.lastDate,
+      lastPurchaseDate: lastDate,
     };
   });
+}
+
+// ----------------- DETTES SANS VENTE (MANUELLES & INITIALES) -----------------
+
+export async function addCustomerDebt(data: {
+  customerId: string;
+  customerName: string;
+  amount: number;
+  type?: CustomerDebtType;
+  date?: string;
+  note?: string;
+}): Promise<CustomerDebtEntry> {
+  if (data.amount <= 0) {
+    throw new Error('Le montant de la dette doit être supérieur à zéro');
+  }
+  const db = await getDB();
+  const debtEntry: CustomerDebtEntry = {
+    id: `debt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    customerId: data.customerId,
+    customerName: data.customerName,
+    amount: Math.round(data.amount),
+    type: data.type || 'dette_manuelle',
+    date: data.date || new Date().toISOString(),
+    note: data.note?.trim() || undefined,
+    isCancelled: false,
+  };
+
+  await db.add('customer_debts', debtEntry);
+  return debtEntry;
+}
+
+export async function cancelCustomerDebt(debtId: string): Promise<CustomerDebtEntry> {
+  const db = await getDB();
+  const debt = await db.get('customer_debts', debtId);
+  if (!debt) throw new Error('Dette introuvable');
+  if (debt.isCancelled) throw new Error('Cette dette est déjà annulée');
+
+  debt.isCancelled = true;
+  await db.put('customer_debts', debt);
+  return debt;
+}
+
+export async function getDebtsForCustomer(customerId: string): Promise<CustomerDebtEntry[]> {
+  const db = await getDB();
+  return db.getAllFromIndex('customer_debts', 'by-customer', customerId);
+}
+
+export async function getAllCustomerDebts(): Promise<CustomerDebtEntry[]> {
+  const db = await getDB();
+  return db.getAll('customer_debts');
 }
 
 export async function recordCreditPayment(
