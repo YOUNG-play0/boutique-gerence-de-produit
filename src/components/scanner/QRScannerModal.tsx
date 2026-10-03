@@ -366,14 +366,17 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                 {/* Gros bouton Unité */}
                 <button
                   type="button"
+                  disabled={scannedProductPendingFormat.stockUnits <= 0}
                   onClick={() => handleChooseFormat('unit')}
-                  className="w-full py-4 px-4 bg-slate-800 hover:bg-slate-700 active:scale-95 border-2 border-slate-700 rounded-2xl text-left flex items-center justify-between text-white transition shadow-lg"
+                  className="w-full py-4 px-4 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 active:scale-95 border-2 border-slate-700 rounded-2xl text-left flex items-center justify-between text-white transition shadow-lg"
                 >
                   <div className="flex items-center gap-3">
                     <Package className="w-6 h-6 text-amber-400" />
                     <div>
                       <div className="text-sm font-black">À l'Unité</div>
-                      <div className="text-xs text-slate-400">1 pièce</div>
+                      <div className="text-xs text-slate-400">
+                        Dispo : {scannedProductPendingFormat.stockUnits} unité(s) seule(s)
+                      </div>
                     </div>
                   </div>
                   <div className="text-base font-black text-amber-400">
@@ -384,8 +387,9 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                 {/* Gros bouton Carton */}
                 <button
                   type="button"
+                  disabled={scannedProductPendingFormat.stockPacks <= 0}
                   onClick={() => handleChooseFormat('pack')}
-                  className="w-full py-4 px-4 bg-amber-600 hover:bg-amber-500 active:scale-95 border-2 border-amber-400 rounded-2xl text-left flex items-center justify-between text-white transition shadow-lg shadow-amber-600/30"
+                  className="w-full py-4 px-4 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 active:scale-95 border-2 border-amber-400 rounded-2xl text-left flex items-center justify-between text-white transition shadow-lg shadow-amber-600/30"
                 >
                   <div className="flex items-center gap-3">
                     <Layers className="w-6 h-6 text-white" />
@@ -394,7 +398,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                         Par {scannedProductPendingFormat.packLabel || 'Carton'}
                       </div>
                       <div className="text-xs text-amber-100 font-semibold">
-                        {scannedProductPendingFormat.packSize} unités incluses
+                        Dispo : {scannedProductPendingFormat.stockPacks} fermé(s) ({scannedProductPendingFormat.packSize} un./carton)
                       </div>
                     </div>
                   </div>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import confetti from 'canvas-confetti';
-import { X, Trash2, Plus, Minus, CheckCircle, CreditCard, UserPlus, Phone, User, Layers, Package } from 'lucide-react';
-import { CartItem, CustomerWithBalance, Sale, UnitType } from '../../types';
+import { X, Trash2, Plus, Minus, CheckCircle, CreditCard, UserPlus, Phone, User, Layers, Package, Box } from 'lucide-react';
+import { CartItem, CustomerWithBalance, ProductWithStock, Sale, UnitType } from '../../types';
 import { formatGNF, playSuccessChime, triggerHaptic } from '../../utils/formatters';
 import { recordSale, createCustomer } from '../../services/db';
 
@@ -9,22 +9,26 @@ interface CartDrawerProps {
   isOpen: boolean;
   items: CartItem[];
   customers: CustomerWithBalance[];
+  products: ProductWithStock[];
   onClose: () => void;
   onUpdateQty: (productId: string, unitType: UnitType, delta: number) => void;
   onRemoveItem: (productId: string, unitType: UnitType) => void;
   onClearCart: () => void;
   onSaleCompleted: (sale: Sale) => void;
+  onOpenPack?: (productId: string) => Promise<void>;
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
   isOpen,
   items,
   customers,
+  products,
   onClose,
   onUpdateQty,
   onRemoveItem,
   onClearCart,
   onSaleCompleted,
+  onOpenPack,
 }) => {
   const [showCreditModal, setShowCreditModal] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
@@ -167,7 +171,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               onClick={onClose}
               className="p-2 rounded-xl text-amber-100 hover:text-white hover:bg-amber-700 transition"
             >
-              <X className="w-6 h-6" />
+              <X className="w-5 h-6" />
             </button>
           </div>
         </div>
@@ -196,66 +200,106 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 ? `${item.packLabel || 'Carton'} (${item.packSize} un.)`
                 : 'Unité';
 
+              const prodLive = products.find((p) => p.id === item.product.id);
+              const maxAvailable = isPack
+                ? (prodLive?.stockPacks ?? 0)
+                : (prodLive?.stockUnits ?? 0);
+
+              const canOpenCarton =
+                !isPack &&
+                prodLive &&
+                prodLive.packSize &&
+                prodLive.stockPacks > 0 &&
+                item.quantity >= (prodLive.stockUnits ?? 0);
+
               return (
                 <div
                   key={`${item.product.id}-${item.unitType}`}
-                  className="p-3.5 bg-amber-50/40 rounded-2xl border border-amber-200/70 shadow-xs flex items-center justify-between gap-2"
+                  className="p-3.5 bg-amber-50/40 rounded-2xl border border-amber-200/70 shadow-xs flex flex-col gap-2"
                 >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <div className="w-11 h-11 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center text-xl flex-shrink-0">
-                      {item.product.imageUrl || '📦'}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 truncate">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div className="w-11 h-11 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center text-xl flex-shrink-0">
+                        {item.product.imageUrl || '📦'}
+                      </div>
+                      <div className="min-w-0 flex-1">
                         <h4 className="text-xs font-bold text-slate-900 truncate">
                           {item.product.name}
                         </h4>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span
+                            className={`text-[10px] font-black px-1.5 py-0.5 rounded capitalize ${
+                              isPack
+                                ? 'bg-amber-600 text-white'
+                                : 'bg-slate-200 text-slate-700'
+                            }`}
+                          >
+                            {formatLabel}
+                          </span>
+                          <span className="text-[11px] text-amber-700 font-semibold">
+                            {formatGNF(item.unitPrice)}
+                          </span>
+                        </div>
+                        <p className="text-xs font-black text-slate-800 mt-0.5">
+                          Total: {formatGNF(item.quantity * item.unitPrice)}
+                        </p>
                       </div>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <span
-                          className={`text-[10px] font-black px-1.5 py-0.5 rounded capitalize ${
-                            isPack
-                              ? 'bg-amber-600 text-white'
-                              : 'bg-slate-200 text-slate-700'
-                          }`}
-                        >
-                          {formatLabel}
-                        </span>
-                        <span className="text-[11px] text-amber-700 font-semibold">
-                          {formatGNF(item.unitPrice)}
-                        </span>
-                      </div>
-                      <p className="text-xs font-black text-slate-800 mt-0.5">
-                        Total: {formatGNF(item.quantity * item.unitPrice)}
-                      </p>
+                    </div>
+
+                    {/* Tactile + / - buttons */}
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button
+                        onClick={() => onUpdateQty(item.product.id, item.unitType, -1)}
+                        className="w-9 h-9 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 active:scale-95 flex items-center justify-center font-black transition shadow-xs"
+                        title="Diminuer"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <span className="w-8 text-center text-base font-black text-slate-900">
+                        {item.quantity}
+                      </span>
+                      <button
+                        onClick={() => {
+                          if (item.quantity >= maxAvailable) {
+                            triggerHaptic(100);
+                            return;
+                          }
+                          onUpdateQty(item.product.id, item.unitType, 1);
+                        }}
+                        disabled={item.quantity >= maxAvailable}
+                        className="w-9 h-9 rounded-xl bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-40 disabled:hover:bg-amber-600 active:scale-95 flex items-center justify-center font-black transition shadow-xs"
+                        title="Augmenter"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => onRemoveItem(item.product.id, item.unitType)}
+                        className="w-8 h-8 ml-1 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
 
-                  {/* Tactile + / - buttons */}
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <button
-                      onClick={() => onUpdateQty(item.product.id, item.unitType, -1)}
-                      className="w-9 h-9 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 active:scale-95 flex items-center justify-center font-black transition shadow-xs"
-                      title="Diminuer"
-                    >
-                      <Minus className="w-4 h-4" />
-                    </button>
-                    <span className="w-8 text-center text-base font-black text-slate-900">
-                      {item.quantity}
+                  {/* Stock info and quick open pack if needed */}
+                  <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-amber-200/40">
+                    <span>
+                      Dispo : <strong>{maxAvailable}</strong> {isPack ? 'carton(s) fermé(s)' : 'unité(s) seule(s)'}
                     </span>
-                    <button
-                      onClick={() => onUpdateQty(item.product.id, item.unitType, 1)}
-                      className="w-9 h-9 rounded-xl bg-amber-600 text-white hover:bg-amber-700 active:scale-95 flex items-center justify-center font-black transition shadow-xs"
-                      title="Augmenter"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => onRemoveItem(item.product.id, item.unitType)}
-                      className="w-8 h-8 ml-1 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+
+                    {canOpenCarton && onOpenPack && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await onOpenPack(item.product.id);
+                          onUpdateQty(item.product.id, 'unit', 1);
+                        }}
+                        className="py-1 px-2 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-black rounded-lg flex items-center gap-1 transition shadow-xs"
+                      >
+                        <Box className="w-3 h-3" />
+                        <span>Ouvrir 1 carton (+{prodLive.packSize})</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               );

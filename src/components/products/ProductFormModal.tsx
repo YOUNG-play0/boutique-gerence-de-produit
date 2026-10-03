@@ -35,6 +35,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   const [price, setPrice] = useState<number | ''>(5000);
   const [category, setCategory] = useState('Alimentation');
   const [alertThreshold, setAlertThreshold] = useState<number>(5);
+  const [alertThresholdPacks, setAlertThresholdPacks] = useState<number | ''>('');
   const [selectedEmoji, setSelectedEmoji] = useState('📦');
   const [barcode, setBarcode] = useState('');
 
@@ -44,9 +45,12 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   const [packSize, setPackSize] = useState<number | ''>(24);
   const [packPrice, setPackPrice] = useState<number | ''>(100000);
 
-  // Saisie stock initial
-  const [initialStockValue, setInitialStockValue] = useState<number | ''>(10);
-  const [initialStockUnit, setInitialStockUnit] = useState<'units' | 'packs'>('units');
+  // Saisie stock initial (création)
+  // Deux champs distincts si carton coché : cartons fermés + unités seules
+  const [initialPacks, setInitialPacks] = useState<number | ''>(0);
+  const [initialUnits, setInitialUnits] = useState<number | ''>(0);
+  // Saisie stock initial simple si pas de carton
+  const [initialSingleStock, setInitialSingleStock] = useState<number | ''>(10);
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -57,6 +61,9 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       setPrice(productToEdit.price);
       setCategory(productToEdit.category || 'Alimentation');
       setAlertThreshold(productToEdit.alertThreshold || 5);
+      setAlertThresholdPacks(
+        productToEdit.alertThresholdPacks !== undefined ? productToEdit.alertThresholdPacks : ''
+      );
       setBarcode(productToEdit.barcode || '');
       setSelectedEmoji(productToEdit.imageUrl || '📦');
       if (productToEdit.packSize && productToEdit.packPrice) {
@@ -74,9 +81,11 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       setName('');
       setPrice(5000);
       setCategory('Alimentation');
-      setInitialStockValue(10);
-      setInitialStockUnit('units');
+      setInitialPacks(0);
+      setInitialUnits(0);
+      setInitialSingleStock(10);
       setAlertThreshold(5);
+      setAlertThresholdPacks('');
       setBarcode('');
       setSelectedEmoji('📦');
       setHasPack(false);
@@ -121,17 +130,13 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       setIsSubmitting(true);
       setError(null);
 
-      // Calcul du stock initial total en UNITÉS
-      const finalInitialUnits =
-        initialStockUnit === 'packs' && hasPack && packSize
-          ? (Number(initialStockValue) || 0) * Number(packSize)
-          : Number(initialStockValue) || 0;
-
       const productPayload = {
         name: name.trim(),
         price: Number(price),
         category,
         alertThreshold: Number(alertThreshold) || 5,
+        alertThresholdPacks:
+          hasPack && alertThresholdPacks !== '' ? Number(alertThresholdPacks) : undefined,
         barcode: barcode.trim() || undefined,
         imageUrl: selectedEmoji,
         packLabel: hasPack ? packLabel : undefined,
@@ -142,7 +147,16 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       if (productToEdit) {
         await updateProduct(productToEdit.id, productPayload);
       } else {
-        await createProduct(productPayload, finalInitialUnits);
+        const initialStockData = hasPack
+          ? {
+              units: Math.max(0, Number(initialUnits) || 0),
+              packs: Math.max(0, Number(initialPacks) || 0),
+            }
+          : {
+              units: Math.max(0, Number(initialSingleStock) || 0),
+            };
+
+        await createProduct(productPayload, initialStockData);
       }
 
       triggerHaptic(50);
@@ -381,86 +395,113 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </select>
           </div>
 
-          {/* Stock initial (si création) */}
+          {/* STOCK INITIAL (SI CRÉATION) */}
           {!productToEdit && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-bold text-slate-700">Stock initial</label>
-                  {hasPack && (
-                    <div className="flex gap-1 text-[10px] font-bold">
-                      <button
-                        type="button"
-                        onClick={() => setInitialStockUnit('units')}
-                        className={`px-1.5 py-0.5 rounded ${
-                          initialStockUnit === 'units'
-                            ? 'bg-amber-600 text-white'
-                            : 'bg-slate-200 text-slate-700'
-                        }`}
-                      >
-                        Unités
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setInitialStockUnit('packs')}
-                        className={`px-1.5 py-0.5 rounded capitalize ${
-                          initialStockUnit === 'packs'
-                            ? 'bg-amber-600 text-white'
-                            : 'bg-slate-200 text-slate-700'
-                        }`}
-                      >
-                        {packLabel}s
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <input
-                  type="number"
-                  min="0"
-                  value={initialStockValue}
-                  onChange={(e) =>
-                    setInitialStockValue(
-                      e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0)
-                    )
-                  }
-                  className="w-full p-3 text-sm font-bold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
-                />
-                {initialStockUnit === 'packs' && hasPack && packSize && (
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    = {(Number(initialStockValue) || 0) * Number(packSize)} unités en stock
-                  </p>
-                )}
-              </div>
+            <div className="space-y-3">
+              {hasPack ? (
+                /* Cas 1 : Vente en carton cochée -> deux champs séparés : Cartons fermés + Unités seules */
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                  <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Layers className="w-4 h-4 text-amber-600" />
+                    <span>Stock initial de départ (2 stocks distincts) :</span>
+                  </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Seuil d'alerte stock (unités) :
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  value={alertThreshold}
-                  onChange={(e) => setAlertThreshold(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-full p-3 text-sm font-bold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
-                />
-              </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 block mb-1">
+                        Cartons fermés en stock :
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={initialPacks}
+                        onChange={(e) =>
+                          setInitialPacks(
+                            e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0)
+                          )
+                        }
+                        className="w-full p-3 text-sm font-bold bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 block mb-1">
+                        Unités seules en stock :
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={initialUnits}
+                        onChange={(e) =>
+                          setInitialUnits(
+                            e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0)
+                          )
+                        }
+                        className="w-full p-3 text-sm font-bold bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Cas 2 : Vente à l'unité seulement -> champ unique en unités */
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">
+                    Stock initial (unités) :
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={initialSingleStock}
+                    onChange={(e) =>
+                      setInitialSingleStock(
+                        e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0)
+                      )
+                    }
+                    className="w-full p-3 text-sm font-bold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              )}
             </div>
           )}
 
-          {productToEdit && (
+          {/* SEUILS D'ALERTE (CRÉATION ET ÉDITION) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
             <div>
               <label className="text-xs font-bold text-slate-700 block mb-1">
-                Seuil d'alerte stock minimum (en unités) :
+                Seuil d'alerte unités seules *
               </label>
               <input
                 type="number"
-                min="1"
+                min="0"
+                required
                 value={alertThreshold}
-                onChange={(e) => setAlertThreshold(Math.max(1, parseInt(e.target.value) || 1))}
+                onChange={(e) => setAlertThreshold(Math.max(0, parseInt(e.target.value) || 0))}
                 className="w-full p-3 text-sm font-bold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
               />
             </div>
-          )}
+
+            {hasPack && (
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Seuil d'alerte cartons (facultatif)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={alertThresholdPacks}
+                  onChange={(e) =>
+                    setAlertThresholdPacks(
+                      e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0)
+                    )
+                  }
+                  placeholder="Ex: 2"
+                  className="w-full p-3 text-sm font-bold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500"
+                />
+              </div>
+            )}
+          </div>
 
           {/* Bouton de soumission */}
           <div className="pt-2">

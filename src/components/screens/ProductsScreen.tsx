@@ -10,10 +10,11 @@ import {
   History,
   Trash2,
   Layers,
+  Box,
 } from 'lucide-react';
 import { ProductWithStock, StockMovement } from '../../types';
-import { formatGNF, formatDateFrench } from '../../utils/formatters';
-import { deleteProduct, getAllStockMovements } from '../../services/db';
+import { formatGNF, formatDateFrench, playSuccessChime, triggerHaptic } from '../../utils/formatters';
+import { deleteProduct, getAllStockMovements, openPack } from '../../services/db';
 
 interface ProductsScreenProps {
   products: ProductWithStock[];
@@ -38,6 +39,7 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
   const [filterMode, setFilterMode] = useState<'all' | 'packsOnly' | 'lowStock'>('all');
   const [showHistoryModal, setShowHistoryModal] = useState<ProductWithStock | null>(null);
   const [productMovements, setProductMovements] = useState<StockMovement[]>([]);
+  const [isOpeningPack, setIsOpeningPack] = useState<string | null>(null);
 
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
@@ -70,6 +72,34 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
     }
   };
 
+  const handleOpenPackAction = async (product: ProductWithStock) => {
+    if (product.stockPacks <= 0) {
+      alert(`Aucun ${product.packLabel || 'carton'} fermé disponible à ouvrir.`);
+      return;
+    }
+
+    const label = product.packLabel || 'carton';
+    if (
+      !window.confirm(
+        `Ouvrir 1 ${label} de « ${product.name} » ?\n\nCela va retirer 1 ${label} fermé et ajouter +${product.packSize} unités seules au stock.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setIsOpeningPack(product.id);
+      await openPack(product.id);
+      playSuccessChime();
+      triggerHaptic(60);
+      onRefreshData();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Erreur lors de l'ouverture du carton");
+    } finally {
+      setIsOpeningPack(null);
+    }
+  };
+
   return (
     <div className="pb-28 pt-2 px-3 sm:px-4 max-w-5xl mx-auto space-y-4">
       {/* Top Banner & Quick Add Button */}
@@ -90,7 +120,7 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
         </button>
       </div>
 
-      {/* Tabs format : Unité vs Carton vs Alertes */}
+      {/* Tabs format : Tous vs Cartons vs Alertes */}
       <div className="grid grid-cols-3 gap-2 p-1 bg-slate-200/70 rounded-2xl">
         <button
           onClick={() => setFilterMode('all')}
@@ -152,7 +182,7 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
         ) : (
           filteredProducts.map((product) => {
             const hasPack = !!(product.packSize && product.packSize >= 2);
-            const availablePacks = hasPack ? Math.floor(product.currentStock / product.packSize!) : 0;
+            const packLabel = product.packLabel || 'carton';
 
             return (
               <div
@@ -184,84 +214,95 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
                         </span>
                         {hasPack && product.packPrice && (
                           <span className="text-xs font-bold text-slate-700 bg-amber-100/60 px-2 py-0.5 rounded-lg border border-amber-200">
-                            {formatGNF(product.packPrice)} /{product.packLabel || 'carton'} ({product.packSize} un.)
+                            {formatGNF(product.packPrice)} /{packLabel} ({product.packSize} un.)
                           </span>
                         )}
                       </div>
                     </div>
                   </div>
 
-                  {/* Stock Display : e.g. "72 unités (3 cartons)" */}
+                  {/* Stock Display : "12 cartons + 7 unités" partout */}
                   <div className="text-right flex flex-col items-end flex-shrink-0">
                     <div
-                      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black ${
-                        product.currentStock <= 0
-                          ? 'bg-rose-100 text-rose-700 border border-rose-200'
-                          : product.isLowStock
-                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                          : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black ${
+                        product.isLowStock
+                          ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                          : 'bg-emerald-100 text-emerald-900 border border-emerald-200'
                       }`}
                     >
-                      {product.isLowStock && <AlertTriangle className="w-3.5 h-3.5" />}
+                      {product.isLowStock && <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />}
                       <span>
-                        {product.currentStock} unités
-                        {hasPack && ` (${availablePacks} ${product.packLabel || 'carton'}${availablePacks > 1 ? 's' : ''})`}
+                        {hasPack
+                          ? `${product.stockPacks} ${packLabel}${product.stockPacks > 1 ? 's' : ''} + ${product.stockUnits} unité${product.stockUnits > 1 ? 's' : ''}`
+                          : `${product.stockUnits} unité${product.stockUnits > 1 ? 's' : ''}`}
                       </span>
                     </div>
 
-                    {hasPack && availablePacks === 0 && product.currentStock > 0 && (
-                      <span className="text-[10px] text-amber-700 font-semibold mt-1">
-                        Pas de {product.packLabel || 'carton'} complet
-                      </span>
-                    )}
-
-                    <span className="text-[10px] text-slate-400 mt-1">
-                      Seuil alerte: {product.alertThreshold} un.
-                    </span>
+                    <div className="text-[10px] text-slate-400 mt-1 flex flex-col items-end">
+                      <span>Alerte unités : {product.alertThreshold}</span>
+                      {hasPack && product.alertThresholdPacks !== undefined && (
+                        <span>Alerte {packLabel}s : {product.alertThresholdPacks}</span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                {/* Action Buttons: Réapprovisionner, Corriger le stock, QR Code, Modifier */}
-                <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {/* 1. Réapprovisionner */}
+                {/* Action Buttons */}
+                <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-2">
+                  {/* BOUTON : OUVRIR UN CARTON si format carton existant */}
+                  {hasPack && (
+                    <button
+                      onClick={() => handleOpenPackAction(product)}
+                      disabled={product.stockPacks <= 0 || isOpeningPack === product.id}
+                      className="py-2.5 px-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:hover:bg-amber-500 active:scale-95 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition shadow-xs flex-1 sm:flex-initial"
+                      title={`Ouvrir 1 ${packLabel} pour obtenir +${product.packSize} unités seules`}
+                    >
+                      <Box className="w-4 h-4" />
+                      <span>
+                        Ouvrir 1 {packLabel} (+{product.packSize} un.)
+                      </span>
+                    </button>
+                  )}
+
+                  {/* Réapprovisionner */}
                   <button
                     onClick={() => onOpenReappro(product)}
-                    className="py-2.5 px-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition"
-                    title="Ajouter des unités ou cartons reçus"
+                    className="py-2.5 px-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition"
+                    title="Ajouter des cartons ou unités reçus"
                   >
                     <PackagePlus className="w-3.5 h-3.5 text-emerald-600" />
                     <span>+ Réappro</span>
                   </button>
 
-                  {/* 2. Corriger le stock */}
+                  {/* Corriger le stock */}
                   <button
                     onClick={() => onOpenCorrection(product)}
-                    className="py-2.5 px-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition"
-                    title="Ajuster pour casse, vol ou inventaire"
+                    className="py-2.5 px-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition"
+                    title="Ajuster cartons ou unités (casse, vol...)"
                   >
                     <SlidersHorizontal className="w-3.5 h-3.5 text-amber-600" />
                     <span>Corriger</span>
                   </button>
 
-                  {/* 3. QR Code */}
+                  {/* QR Code */}
                   <button
                     onClick={() => onOpenQRCode(product)}
-                    className="py-2.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition"
+                    className="py-2.5 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition"
                     title="Afficher et imprimer le QR Code"
                   >
                     <QrCode className="w-3.5 h-3.5 text-slate-600" />
-                    <span>QR Code</span>
+                    <span className="hidden sm:inline">QR Code</span>
                   </button>
 
-                  {/* 4. Historique & Options */}
-                  <div className="flex gap-1">
+                  {/* Historique & Options */}
+                  <div className="flex gap-1 ml-auto">
                     <button
                       onClick={() => handleOpenHistory(product)}
-                      className="flex-1 py-2.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1 active:scale-95 transition"
+                      className="py-2.5 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1 active:scale-95 transition"
                       title="Historique des mouvements"
                     >
                       <History className="w-3.5 h-3.5 text-slate-500" />
-                      <span>Historique</span>
+                      <span className="hidden md:inline">Mouvements</span>
                     </button>
                     <button
                       onClick={() => onOpenEditModal(product)}
@@ -306,9 +347,11 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
             </div>
 
             <div className="my-3 p-3 bg-amber-50 rounded-2xl border border-amber-200 flex justify-between items-center text-xs">
-              <span className="font-bold text-slate-600">Stock calculé total :</span>
-              <span className="text-base font-black text-amber-800">
-                {showHistoryModal.currentStock} unités
+              <span className="font-bold text-slate-600">Stock actuel enregistré :</span>
+              <span className="text-sm font-black text-amber-900">
+                {showHistoryModal.packSize
+                  ? `${showHistoryModal.stockPacks} ${showHistoryModal.packLabel || 'carton'}(s) + ${showHistoryModal.stockUnits} unité(s)`
+                  : `${showHistoryModal.stockUnits} unité(s)`}
               </span>
             </div>
 
@@ -318,6 +361,8 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
               ) : (
                 productMovements.map((mov) => {
                   const isPositive = mov.quantity > 0;
+                  const supportLabel = mov.support === 'pack' ? (showHistoryModal.packLabel || 'carton') : 'unité';
+
                   return (
                     <div
                       key={mov.id}
@@ -326,11 +371,15 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
                       <div>
                         <div className="font-bold text-slate-800 capitalize">
                           {mov.type === 'initial'
-                            ? 'Stock initial'
+                            ? `Stock initial (${supportLabel})`
                             : mov.type === 'reappro'
-                            ? 'Réapprovisionnement'
+                            ? `Réappro (${supportLabel})`
                             : mov.type === 'vente'
-                            ? 'Vente'
+                            ? `Vente (${supportLabel})`
+                            : mov.type === 'ouverture'
+                            ? `Ouverture carton`
+                            : mov.type === 'annulation'
+                            ? `Annulation vente`
                             : `Correction (${mov.reason || 'inventaire'})`}
                         </div>
                         <div className="text-[10px] text-slate-400">
@@ -345,7 +394,7 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
                             : 'bg-rose-100 text-rose-800'
                         }`}
                       >
-                        {isPositive ? `+${mov.quantity}` : mov.quantity} un.
+                        {isPositive ? `+${mov.quantity}` : mov.quantity} {supportLabel}
                       </span>
                     </div>
                   );

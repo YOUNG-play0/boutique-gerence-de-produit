@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Search, QrCode, ShoppingCart, AlertCircle, Filter, Layers, Package } from 'lucide-react';
+import { Search, QrCode, ShoppingCart, AlertCircle, Filter, Layers, Package, Box, AlertTriangle } from 'lucide-react';
 import { ProductWithStock, CartItem, UnitType } from '../../types';
 import { formatGNF, playBeep, triggerHaptic } from '../../utils/formatters';
 
@@ -9,6 +9,7 @@ interface SaleScreenProps {
   onAddToCart: (product: ProductWithStock, unitType: UnitType) => void;
   onOpenScanner: () => void;
   onOpenCart: () => void;
+  onOpenPack: (productId: string) => Promise<void>;
 }
 
 export const SaleScreen: React.FC<SaleScreenProps> = ({
@@ -17,10 +18,15 @@ export const SaleScreen: React.FC<SaleScreenProps> = ({
   onAddToCart,
   onOpenScanner,
   onOpenCart,
+  onOpenPack,
 }) => {
   const [saleFormat, setSaleFormat] = useState<UnitType>('unit');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Tous');
+
+  // Confirmation modal: "Plus assez d'unités. Ouvrir un carton (+N unités) ?"
+  const [promptOpenPackProduct, setPromptOpenPackProduct] = useState<ProductWithStock | null>(null);
+  const [isProcessingOpenPack, setIsProcessingOpenPack] = useState(false);
 
   // Categories list
   const categories = useMemo(() => {
@@ -58,18 +64,61 @@ export const SaleScreen: React.FC<SaleScreenProps> = ({
   );
 
   const handleProductTap = (product: ProductWithStock) => {
+    const hasPack = !!(product.packSize && product.packSize >= 2);
+
     if (saleFormat === 'pack') {
-      const packSize = product.packSize || 1;
-      const availablePacks = Math.floor(product.currentStock / packSize);
-      if (availablePacks <= 0) {
+      // Carton mode: vérifie le stock de cartons fermés (stockPacks)
+      const currentCartPacks = cartItems.find(
+        (it) => it.product.id === product.id && it.unitType === 'pack'
+      )?.quantity || 0;
+
+      if (currentCartPacks >= product.stockPacks) {
         triggerHaptic(100);
         return;
       }
+
+      playBeep();
+      triggerHaptic(40);
+      onAddToCart(product, 'pack');
+      return;
+    }
+
+    // Unité mode: vérifie le stock d'unités seules (stockUnits)
+    const currentCartUnits = cartItems.find(
+      (it) => it.product.id === product.id && it.unitType === 'unit'
+    )?.quantity || 0;
+
+    if (currentCartUnits >= product.stockUnits || product.stockUnits <= 0) {
+      // Si les unités seules sont insuffisantes mais qu'il reste des cartons fermés
+      if (hasPack && product.stockPacks > 0) {
+        triggerHaptic(80);
+        setPromptOpenPackProduct(product);
+        return;
+      }
+
+      triggerHaptic(100);
+      return;
     }
 
     playBeep();
     triggerHaptic(40);
-    onAddToCart(product, saleFormat);
+    onAddToCart(product, 'unit');
+  };
+
+  const handleConfirmOpenPack = async () => {
+    if (!promptOpenPackProduct) return;
+    try {
+      setIsProcessingOpenPack(true);
+      const targetProd = promptOpenPackProduct;
+      await onOpenPack(targetProd.id);
+      // Après ouverture, ajouter directement 1 unité au panier
+      onAddToCart(targetProd, 'unit');
+      setPromptOpenPackProduct(null);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Erreur lors de l’ouverture du carton');
+    } finally {
+      setIsProcessingOpenPack(false);
+    }
   };
 
   const packProductsCount = products.filter((p) => p.packSize && p.packPrice).length;
@@ -185,28 +234,25 @@ export const SaleScreen: React.FC<SaleScreenProps> = ({
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {filteredProducts.map((product) => {
             const isPack = saleFormat === 'pack';
-            const packSize = product.packSize || 1;
+            const hasPack = !!(product.packSize && product.packSize >= 2);
             const packLabel = product.packLabel || 'carton';
             const displayPrice = isPack && product.packPrice ? product.packPrice : product.price;
 
-            // Available packs = Math.floor(stock / packSize)
-            const availablePacks = isPack ? Math.floor(product.currentStock / packSize) : 0;
-            const isOutOfStock = isPack ? availablePacks <= 0 : product.currentStock <= 0;
+            // L'onglet Carton ne montre que les cartons fermés disponibles (stockPacks).
+            // L'onglet Unité ne montre que les unités seules disponibles (stockUnits).
+            const isOutOfStock = isPack ? product.stockPacks <= 0 : product.stockUnits <= 0;
+            const canOpenPack = !isPack && hasPack && product.stockUnits <= 0 && product.stockPacks > 0;
 
-            // Check if this specific format is already in cart
             const inCart = cartItems.find(
               (it) => it.product.id === product.id && it.unitType === saleFormat
             );
 
             return (
-              <button
+              <div
                 key={`${product.id}-${saleFormat}`}
-                type="button"
-                disabled={isPack && availablePacks <= 0}
-                onClick={() => handleProductTap(product)}
-                className={`group relative text-left bg-white rounded-3xl p-3.5 border-2 transition-all flex flex-col justify-between active:scale-95 shadow-xs hover:shadow-md ${
-                  isPack && availablePacks <= 0
-                    ? 'opacity-60 bg-slate-50 border-slate-200 cursor-not-allowed'
+                className={`group relative text-left bg-white rounded-3xl p-3.5 border-2 transition-all flex flex-col justify-between shadow-xs hover:shadow-md ${
+                  isOutOfStock && !canOpenPack
+                    ? 'opacity-60 bg-slate-50 border-slate-200'
                     : inCart
                     ? 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-50/30'
                     : 'border-amber-100/90 hover:border-amber-300'
@@ -214,67 +260,138 @@ export const SaleScreen: React.FC<SaleScreenProps> = ({
               >
                 {/* Cart badge on card if already added */}
                 {inCart && (
-                  <div className="absolute top-2.5 right-2.5 w-7 h-7 bg-amber-600 text-white rounded-full flex items-center justify-center font-black text-xs shadow-md animate-in zoom-in-50 duration-150">
+                  <div className="absolute top-2.5 right-2.5 w-7 h-7 bg-amber-600 text-white rounded-full flex items-center justify-center font-black text-xs shadow-md animate-in zoom-in-50 duration-150 z-10">
                     {inCart.quantity}
                   </div>
                 )}
 
-                {/* Product Image / Emoji */}
-                <div className="w-full aspect-square max-h-24 sm:max-h-28 rounded-2xl bg-amber-50 flex items-center justify-center text-4xl sm:text-5xl mb-2.5 transition-transform group-hover:scale-105">
-                  {product.imageUrl || '📦'}
-                </div>
-
-                {/* Product Info */}
-                <div className="space-y-1 w-full">
-                  <h3 className="text-xs sm:text-sm font-bold text-slate-900 leading-snug line-clamp-2 min-h-[2rem]">
-                    {product.name}
-                  </h3>
-
-                  {/* Format tag if carton */}
-                  {isPack && (
-                    <span className="inline-block text-[10px] font-black uppercase text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">
-                      {packLabel} de {packSize}
-                    </span>
-                  )}
-
-                  {/* Big clear Price in GNF */}
-                  <div className="text-sm sm:text-base font-black text-amber-700 tracking-tight">
-                    {formatGNF(displayPrice)}
+                <button
+                  type="button"
+                  onClick={() => handleProductTap(product)}
+                  className="w-full text-left flex flex-col flex-1 justify-between focus:outline-none"
+                >
+                  {/* Product Image / Emoji */}
+                  <div className="w-full aspect-square max-h-24 sm:max-h-28 rounded-2xl bg-amber-50 flex items-center justify-center text-4xl sm:text-5xl mb-2.5 transition-transform group-hover:scale-105">
+                    {product.imageUrl || '📦'}
                   </div>
 
-                  {/* Stock pill */}
-                  <div className="pt-1 flex items-center justify-between text-[11px]">
-                    <span
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[10px] ${
-                        isOutOfStock
-                          ? 'bg-rose-100 text-rose-700'
-                          : product.isLowStock
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-emerald-100 text-emerald-800'
-                      }`}
-                    >
-                      {product.isLowStock && !isOutOfStock && <AlertCircle className="w-3 h-3" />}
-                      <span>
-                        {isPack
-                          ? availablePacks <= 0
-                            ? `Pas de ${packLabel} complet`
-                            : `${availablePacks} ${packLabel}${availablePacks > 1 ? 's' : ''}`
-                          : isOutOfStock
-                          ? 'Épuisé'
-                          : `Stock: ${product.currentStock}`}
-                      </span>
-                    </span>
+                  {/* Product Info */}
+                  <div className="space-y-1 w-full">
+                    <h3 className="text-xs sm:text-sm font-bold text-slate-900 leading-snug line-clamp-2 min-h-[2rem]">
+                      {product.name}
+                    </h3>
 
-                    {!isOutOfStock && (
-                      <span className="text-[10px] text-amber-600 font-bold opacity-0 group-hover:opacity-100 transition">
-                        +1 {isPack ? packLabel : 'Tap'}
+                    {/* Format tag if carton */}
+                    {isPack && (
+                      <span className="inline-block text-[10px] font-black uppercase text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">
+                        {packLabel} de {product.packSize}
                       </span>
                     )}
+
+                    {/* Price in GNF */}
+                    <div className="text-sm sm:text-base font-black text-amber-700 tracking-tight">
+                      {formatGNF(displayPrice)}
+                    </div>
+
+                    {/* Stock Display : "X cartons + Y unités" partout */}
+                    <div className="pt-1 space-y-0.5">
+                      <div className="text-[10px] font-extrabold text-slate-700">
+                        {hasPack ? (
+                          <span>
+                            {product.stockPacks} {packLabel}{product.stockPacks > 1 ? 's' : ''} + {product.stockUnits} un.
+                          </span>
+                        ) : (
+                          <span>{product.stockUnits} unité{product.stockUnits > 1 ? 's' : ''}</span>
+                        )}
+                      </div>
+
+                      {/* Stock status pill */}
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[10px] ${
+                          isOutOfStock && !canOpenPack
+                            ? 'bg-rose-100 text-rose-700'
+                            : canOpenPack
+                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                            : 'bg-emerald-100 text-emerald-800'
+                        }`}
+                      >
+                        {isPack ? (
+                          product.stockPacks <= 0 ? '0 carton fermé' : `${product.stockPacks} dispo`
+                        ) : product.stockUnits <= 0 ? (
+                          canOpenPack ? `Ouvrir 1 ${packLabel}` : 'Épuisé (0)'
+                        ) : (
+                          `${product.stockUnits} seule(s) dispo`
+                        )}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              </button>
+                </button>
+
+                {/* Bouton direct "Ouvrir un carton" si l'utilisateur est sur l'onglet Unité et a des cartons fermés */}
+                {!isPack && hasPack && product.stockPacks > 0 && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPromptOpenPackProduct(product);
+                    }}
+                    className="mt-2 w-full py-1.5 px-2 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 rounded-xl text-[10px] font-black flex items-center justify-center gap-1 transition"
+                  >
+                    <Box className="w-3 h-3 text-amber-600" />
+                    <span>Ouvrir 1 {packLabel} (+{product.packSize})</span>
+                  </button>
+                )}
+              </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Confirmation Modal : "Plus assez d'unités. Ouvrir un carton (+N unités) ?" */}
+      {promptOpenPackProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl text-slate-800 text-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto text-2xl">
+              <Box className="w-7 h-7" />
+            </div>
+
+            <div>
+              <h3 className="text-base font-black text-slate-900">
+                Plus assez d'unités seules
+              </h3>
+              <p className="text-xs text-slate-500 font-medium mt-1">
+                Le stock d'unités seules pour « <strong>{promptOpenPackProduct.name}</strong> » est insuffisant.
+              </p>
+            </div>
+
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 font-bold">
+              Il vous reste <strong>{promptOpenPackProduct.stockPacks} {promptOpenPackProduct.packLabel || 'carton'}(s)</strong> fermé(s).
+              <div className="mt-1 text-amber-700 font-normal">
+                Ouvrir un carton va déballer <strong>+{promptOpenPackProduct.packSize} unités seules</strong> et ajouter 1 unité au panier.
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <button
+                type="button"
+                disabled={isProcessingOpenPack}
+                onClick={handleConfirmOpenPack}
+                className="w-full py-3.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-amber-600/30 transition flex items-center justify-center gap-2"
+              >
+                <Box className="w-4 h-4" />
+                <span>Ouvrir un carton (+{promptOpenPackProduct.packSize} unités)</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isProcessingOpenPack}
+                onClick={() => setPromptOpenPackProduct(null)}
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition"
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

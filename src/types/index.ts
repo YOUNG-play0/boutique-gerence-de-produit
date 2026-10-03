@@ -1,8 +1,9 @@
-export type StockMovementType = 'initial' | 'reappro' | 'vente' | 'correction';
+export type StockMovementType = 'initial' | 'reappro' | 'vente' | 'correction' | 'ouverture' | 'annulation';
 
 export type CorrectionReason = 'casse' | 'vol' | 'erreur' | 'perime' | 'don' | 'autre';
 
 export type UnitType = 'unit' | 'pack';
+export type StockSupport = 'unit' | 'pack';
 
 export interface Product {
   id: string;
@@ -11,11 +12,12 @@ export interface Product {
   category?: string;
   imageUrl?: string;
   barcode?: string;
-  alertThreshold: number; // Seuil d'alerte en unités
+  alertThreshold: number; // Seuil d'alerte en unités seules
   // Vente par carton / format groupé
   packLabel?: string; // Libellé ("carton", "sac", "paquet", "caisse")
   packSize?: number; // Nombre d'unités par carton (>= 2)
   packPrice?: number; // Prix du carton en GNF
+  alertThresholdPacks?: number; // Seuil d'alerte cartons fermés facultatif
   createdAt: string;
   updatedAt: string;
 }
@@ -24,7 +26,8 @@ export interface StockMovement {
   id: string;
   productId: string;
   type: StockMovementType;
-  quantity: number; // Toujours exprimé en UNITÉS physiques (+ pour entrée, - pour sortie)
+  support: StockSupport; // 'unit' (unités seules) ou 'pack' (cartons fermés)
+  quantity: number; // Quantité (+ pour entrée, - pour sortie) dans le support spécifié
   reason?: CorrectionReason | string;
   note?: string;
   saleId?: string;
@@ -32,7 +35,11 @@ export interface StockMovement {
 }
 
 export interface ProductWithStock extends Product {
-  currentStock: number; // Stock actuel en UNITÉS
+  stockUnits: number; // Stock d'unités seules disponibles
+  stockPacks: number; // Stock de cartons fermés disponibles
+  currentStock: number; // Total équivalent (unités seules + cartons * packSize) pour compatibilité
+  isLowStockUnits: boolean;
+  isLowStockPacks: boolean;
   isLowStock: boolean;
 }
 
@@ -68,6 +75,7 @@ export interface Sale {
   customerName?: string;
   customerPhone?: string;
   notes?: string;
+  isCancelled?: boolean;
 }
 
 export interface Customer {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X, Plus, AlertTriangle, CheckCircle2, Layers } from 'lucide-react';
-import { ProductWithStock, CorrectionReason } from '../../types';
+import { X, Plus, AlertTriangle, CheckCircle2, Layers, Package } from 'lucide-react';
+import { ProductWithStock, CorrectionReason, StockSupport } from '../../types';
 import { addStockReappro, correctStock } from '../../services/db';
 import { triggerHaptic } from '../../utils/formatters';
 
@@ -21,23 +21,17 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
 }) => {
   const hasPack = !!(product?.packSize && product.packSize >= 2);
   const packLabel = product?.packLabel || 'carton';
-  const packSize = product?.packSize || 1;
 
-  const [inputUnit, setInputUnit] = useState<'units' | 'packs'>('units');
-  const [quantity, setQuantity] = useState<number>(mode === 'reappro' ? (hasPack ? 1 : 10) : 1);
-  const [isNegative, setIsNegative] = useState<boolean>(true); // for correction: default remove
+  // Support ciblé : 'pack' (cartons fermés) ou 'unit' (unités seules)
+  const [targetSupport, setTargetSupport] = useState<StockSupport>('unit');
+  const [quantity, setQuantity] = useState<number>(mode === 'reappro' ? 10 : 1);
+  const [isNegative, setIsNegative] = useState<boolean>(true); // pour correction : retrait par défaut
   const [reason, setReason] = useState<CorrectionReason>('casse');
   const [note, setNote] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen || !product) return null;
-
-  // Calcul du nombre total d'unités physiques réelles
-  const finalUnits =
-    mode === 'reappro' && inputUnit === 'packs' && hasPack
-      ? quantity * packSize
-      : quantity;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,15 +45,21 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
       setError(null);
 
       if (mode === 'reappro') {
-        const reapproNote =
-          inputUnit === 'packs' && hasPack
-            ? `${quantity} ${packLabel}(s) de ${packSize}${note.trim() ? ` • ${note.trim()}` : ''}`
-            : note.trim() || undefined;
-
-        await addStockReappro(product.id, finalUnits, reapproNote);
+        await addStockReappro(
+          product.id,
+          quantity,
+          targetSupport,
+          note.trim() || undefined
+        );
       } else {
         const delta = isNegative ? -Math.abs(quantity) : Math.abs(quantity);
-        await correctStock(product.id, delta, reason, note.trim() || undefined);
+        await correctStock(
+          product.id,
+          delta,
+          targetSupport,
+          reason,
+          note.trim() || undefined
+        );
       }
 
       triggerHaptic(50);
@@ -75,8 +75,6 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
   const adjustQty = (amount: number) => {
     setQuantity((prev) => Math.max(1, prev + amount));
   };
-
-  const availablePacks = hasPack ? Math.floor(product.currentStock / packSize) : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in duration-200">
@@ -106,7 +104,7 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
           </button>
         </div>
 
-        {/* Current stock status */}
+        {/* Current stock status : montre "X cartons + Y unités" */}
         <div className="my-4 p-3 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
           <span className="text-xs font-semibold text-slate-500">Stock actuel enregistré :</span>
           <div className="text-right">
@@ -115,13 +113,10 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
                 product.isLowStock ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-800'
               }`}
             >
-              {product.currentStock} unités
+              {hasPack
+                ? `${product.stockPacks} ${packLabel}${product.stockPacks > 1 ? 's' : ''} + ${product.stockUnits} unité${product.stockUnits > 1 ? 's' : ''}`
+                : `${product.stockUnits} unités`}
             </span>
-            {hasPack && (
-              <div className="text-[11px] text-slate-500 mt-1 font-semibold">
-                Soit {availablePacks} {packLabel}{availablePacks > 1 ? 's' : ''} complet{availablePacks > 1 ? 's' : ''}
-              </div>
-            )}
           </div>
         </div>
 
@@ -132,6 +127,41 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Si produit avec carton : sélecteur de stock cible (Cartons fermés vs Unités seules) */}
+          {hasPack && (
+            <div>
+              <label className="text-xs font-bold text-slate-700 block mb-1.5">
+                Quel stock souhaitez-vous {mode === 'reappro' ? 'réapprovisionner' : 'corriger'} ?
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTargetSupport('pack')}
+                  className={`py-2.5 rounded-xl font-bold text-xs border capitalize transition flex items-center justify-center gap-1.5 ${
+                    targetSupport === 'pack'
+                      ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <Layers className="w-4 h-4" />
+                  <span>{packLabel}s fermés ({product.stockPacks})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTargetSupport('unit')}
+                  className={`py-2.5 rounded-xl font-bold text-xs border transition flex items-center justify-center gap-1.5 ${
+                    targetSupport === 'unit'
+                      ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <Package className="w-4 h-4" />
+                  <span>Unités seules ({product.stockUnits})</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {mode === 'correction' && (
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-700">Sens de la correction :</label>
@@ -191,55 +221,18 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
             </div>
           )}
 
-          {/* Saisie en unités OU en cartons si réapprovisionnement */}
-          {mode === 'reappro' && hasPack && (
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                Saisir l'entrée en :
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setInputUnit('units')}
-                  className={`py-2.5 rounded-xl font-bold text-xs border transition ${
-                    inputUnit === 'units'
-                      ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
-                      : 'bg-white text-slate-700 border-slate-200'
-                  }`}
-                >
-                  Unités individuelles
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInputUnit('packs')}
-                  className={`py-2.5 rounded-xl font-bold text-xs border capitalize transition flex items-center justify-center gap-1.5 ${
-                    inputUnit === 'packs'
-                      ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
-                      : 'bg-white text-slate-700 border-slate-200'
-                  }`}
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  <span>{packLabel}s ({packSize} un.)</span>
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* Quantity Selector with Big Touch Buttons */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-bold text-slate-700">
                 {mode === 'reappro'
-                  ? inputUnit === 'packs' && hasPack
-                    ? `Nombre de ${packLabel}s reçus :`
-                    : "Nombre d'unités reçues :"
-                  : "Nombre d'unités concernées :"}
+                  ? targetSupport === 'pack' && hasPack
+                    ? `Nombre de ${packLabel}s fermés à ajouter :`
+                    : "Nombre d'unités seules à ajouter :"
+                  : targetSupport === 'pack' && hasPack
+                  ? `Nombre de ${packLabel}s concernés :`
+                  : "Nombre d'unités seules concernées :"}
               </label>
-              {mode === 'reappro' && inputUnit === 'packs' && hasPack && (
-                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
-                  = +{finalUnits} unités au total
-                </span>
-              )}
             </div>
 
             <div className="flex items-center gap-3">
@@ -288,7 +281,7 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
             </label>
             <input
               type="text"
-              placeholder={mode === 'reappro' ? 'Ex: Fournisseur Madina' : 'Ex: Casse étagère'}
+              placeholder={mode === 'reappro' ? 'Ex: Livraison Madina' : 'Ex: Casse étagère'}
               value={note}
               onChange={(e) => setNote(e.target.value)}
               className="w-full p-3 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500"
@@ -309,8 +302,12 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
               <CheckCircle2 className="w-5 h-5" />
               <span>
                 {mode === 'reappro'
-                  ? `Valider le réappro (+${finalUnits} unités)`
-                  : `Enregistrer la correction (${isNegative ? '-' : '+'}${quantity})`}
+                  ? `Valider (+${quantity} ${
+                      targetSupport === 'pack' && hasPack ? `${packLabel}(s)` : 'unité(s)'
+                    })`
+                  : `Valider la correction (${isNegative ? '-' : '+'}${quantity} ${
+                      targetSupport === 'pack' && hasPack ? `${packLabel}(s)` : 'unité(s)'
+                    })`}
               </span>
             </button>
           </div>

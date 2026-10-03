@@ -22,6 +22,25 @@ export default defineConfig(() => {
                 try {
                   const body = JSON.parse(bodyStr || '{}');
                   const { question, contexte } = body;
+
+                  if (!question || typeof question !== 'string') {
+                    res.statusCode = 400;
+                    res.setHeader('Content-Type', 'application/json');
+                    res.end(JSON.stringify({ error: 'Question manquante.' }));
+                    return;
+                  }
+
+                  if (question.length > 500) {
+                    res.statusCode = 400;
+                    res.setHeader('Content-Type', 'application/json');
+                    res.end(
+                      JSON.stringify({
+                        error: 'La question ne doit pas dépasser 500 caractères.',
+                      })
+                    );
+                    return;
+                  }
+
                   const groqApiKey = process.env.GROQ_API_KEY;
 
                   if (!groqApiKey) {

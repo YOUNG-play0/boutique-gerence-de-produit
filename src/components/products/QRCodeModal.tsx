@@ -79,9 +79,14 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({ isOpen, product, onClo
           <div className="text-base font-bold text-slate-900 leading-tight mb-1">
             {product.name}
           </div>
-          <div className="text-xl font-black text-amber-700 mb-3 tracking-wide">
-            {formatGNF(product.price)}
+          <div className="text-xl font-black text-amber-700 mb-1 tracking-wide">
+            {formatGNF(product.price)} <span className="text-xs font-normal text-slate-500">/unité</span>
           </div>
+          {product.packPrice && product.packSize && (
+            <div className="text-xs font-bold text-slate-700 bg-amber-100 px-2 py-0.5 rounded-lg border border-amber-200 mb-3">
+              {formatGNF(product.packPrice)} /{product.packLabel || 'carton'} ({product.packSize} un.)
+            </div>
+          )}
 
           <div className="p-3 bg-white rounded-xl shadow-xs border border-slate-200">
             <canvas ref={canvasRef} className="max-w-[200px] h-auto mx-auto" />

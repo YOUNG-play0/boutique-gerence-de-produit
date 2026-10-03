@@ -24,6 +24,8 @@ import {
   getAllSales,
   getAllCreditPayments,
   getShopSettings,
+  openPack,
+  cancelSale,
 } from './services/db';
 import { SaleScreen } from './components/screens/SaleScreen';
 import { ProductsScreen } from './components/screens/ProductsScreen';
@@ -155,19 +157,12 @@ export default function App() {
         (item) => item.product.id === product.id && item.unitType === unitType
       );
 
-      // Calculer le total d'unités physiques déjà dans le panier pour ce produit
-      const totalUnitsInCart = prev.reduce((sum, item) => {
-        if (item.product.id === product.id) {
-          const mult = item.unitType === 'pack' ? item.packSize || 1 : 1;
-          return sum + item.quantity * mult;
-        }
-        return sum;
-      }, 0);
+      const currentQty = existing ? existing.quantity : 0;
+      const maxAvailable = isPack ? product.stockPacks : product.stockUnits;
 
-      const addedUnits = isPack ? product.packSize || 1 : 1;
-      if (totalUnitsInCart + addedUnits > product.currentStock) {
-        // Stock insuffisant
+      if (currentQty + 1 > maxAvailable) {
         triggerHaptic(100);
+        return prev;
       }
 
       if (existing) {
@@ -193,11 +188,22 @@ export default function App() {
   };
 
   const handleUpdateCartQty = (productId: string, unitType: UnitType, delta: number) => {
+    const currentProd = products.find((p) => p.id === productId);
+    const maxAvailable = currentProd
+      ? unitType === 'pack'
+        ? currentProd.stockPacks
+        : currentProd.stockUnits
+      : Infinity;
+
     setCartItems((prev) => {
       return prev
         .map((item) => {
           if (item.product.id === productId && item.unitType === unitType) {
             const nextQty = item.quantity + delta;
+            if (delta > 0 && nextQty > maxAvailable) {
+              triggerHaptic(100);
+              return item;
+            }
             return nextQty > 0 ? { ...item, quantity: nextQty } : null;
           }
           return item;
@@ -214,6 +220,16 @@ export default function App() {
 
   const handleClearCart = () => {
     setCartItems([]);
+  };
+
+  const handleOpenPack = async (productId: string) => {
+    await openPack(productId);
+    await refreshAllData();
+  };
+
+  const handleCancelSale = async (saleId: string) => {
+    await cancelSale(saleId);
+    await refreshAllData();
   };
 
   const handleProductScanned = (scannedProduct: ProductWithStock, unitType: UnitType) => {
@@ -334,6 +350,7 @@ export default function App() {
             onAddToCart={handleAddToCart}
             onOpenScanner={() => setIsScannerOpen(true)}
             onOpenCart={() => setIsCartOpen(true)}
+            onOpenPack={handleOpenPack}
           />
         )}
 
@@ -478,12 +495,14 @@ export default function App() {
       <CartDrawer
         isOpen={isCartOpen}
         items={cartItems}
+        products={products}
         customers={customers}
         onClose={() => setIsCartOpen(false)}
         onUpdateQty={handleUpdateCartQty}
         onRemoveItem={handleRemoveCartItem}
         onClearCart={handleClearCart}
         onSaleCompleted={handleSaleCompleted}
+        onOpenPack={handleOpenPack}
       />
 
       {/* QR Scanner Modal */}

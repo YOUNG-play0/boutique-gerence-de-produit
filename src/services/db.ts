@@ -10,6 +10,7 @@ import {
   CustomerWithBalance,
   ShopSettings,
   StockMovementType,
+  StockSupport,
   CorrectionReason,
   UnitType,
 } from '../types';
@@ -99,10 +100,6 @@ export function getDB(): Promise<IDBPDatabase<BoutiqueDB>> {
   return dbPromise;
 }
 
-/**
- * Initialisation de la base : AUCUN produit, client ou boutique fictive n'est injecté automatiquement.
- * Si aucune boutique n'est configurée, l'écran "Créer ma boutique" est affiché.
- */
 export async function initDatabase(): Promise<void> {
   await getDB();
 }
@@ -216,7 +213,7 @@ export async function checkPin(pin: string): Promise<boolean> {
   return verifyPin(pin, current.pinSalt, current.pinHash);
 }
 
-// ----------------- STOCK & PRODUITS -----------------
+// ----------------- STOCK & PRODUITS (DEUX STOCKS SÉPARÉS) -----------------
 
 export async function getAllProducts(): Promise<Product[]> {
   const db = await getDB();
@@ -239,7 +236,9 @@ export async function getMovementsForProduct(productId: string): Promise<StockMo
 }
 
 /**
- * Calcul dynamique du stock : le stock est toujours la somme des mouvements en UNITÉS.
+ * Calcul dynamique des deux stocks séparés :
+ * - stockUnits : somme des mouvements où support === 'unit' (ou undefined pour l'historique)
+ * - stockPacks : somme des mouvements où support === 'pack'
  */
 export async function getProductsWithStock(): Promise<ProductWithStock[]> {
   const db = await getDB();
@@ -248,25 +247,47 @@ export async function getProductsWithStock(): Promise<ProductWithStock[]> {
     db.getAll('stock_movements'),
   ]);
 
-  const stockMap = new Map<string, number>();
+  const unitsMap = new Map<string, number>();
+  const packsMap = new Map<string, number>();
+
   for (const mov of movements) {
-    const current = stockMap.get(mov.productId) || 0;
-    stockMap.set(mov.productId, current + mov.quantity);
+    const support: StockSupport = mov.support || 'unit';
+    if (support === 'pack') {
+      const cur = packsMap.get(mov.productId) || 0;
+      packsMap.set(mov.productId, cur + mov.quantity);
+    } else {
+      const cur = unitsMap.get(mov.productId) || 0;
+      unitsMap.set(mov.productId, cur + mov.quantity);
+    }
   }
 
   return products.map((prod) => {
-    const currentStock = stockMap.get(prod.id) || 0;
+    const stockUnits = unitsMap.get(prod.id) || 0;
+    const stockPacks = packsMap.get(prod.id) || 0;
+
+    const hasPack = !!(prod.packSize && prod.packSize >= 2);
+    const currentStock = stockUnits + (hasPack ? stockPacks * prod.packSize! : 0);
+
+    const isLowStockUnits = stockUnits <= prod.alertThreshold;
+    const isLowStockPacks = hasPack && prod.alertThresholdPacks !== undefined
+      ? stockPacks <= prod.alertThresholdPacks
+      : false;
+
     return {
       ...prod,
+      stockUnits,
+      stockPacks,
       currentStock,
-      isLowStock: currentStock <= prod.alertThreshold,
+      isLowStockUnits,
+      isLowStockPacks,
+      isLowStock: isLowStockUnits || isLowStockPacks,
     };
   });
 }
 
 export async function createProduct(
   productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>,
-  initialUnits: number
+  initialStock: { units: number; packs?: number }
 ): Promise<Product> {
   const db = await getDB();
   const id = `prod-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -282,16 +303,30 @@ export async function createProduct(
   const tx = db.transaction(['products', 'stock_movements'], 'readwrite');
   await tx.objectStore('products').add(newProduct);
 
-  if (initialUnits > 0) {
-    const initialMovement: StockMovement = {
-      id: `mov-${Date.now()}`,
+  if (initialStock.units > 0) {
+    const unitMovement: StockMovement = {
+      id: `mov-${Date.now()}-unit`,
       productId: id,
       type: 'initial',
-      quantity: Math.max(0, initialUnits),
-      reason: 'Stock de départ',
+      support: 'unit',
+      quantity: Math.max(0, initialStock.units),
+      reason: 'Stock de départ (unités seules)',
       date: now,
     };
-    await tx.objectStore('stock_movements').add(initialMovement);
+    await tx.objectStore('stock_movements').add(unitMovement);
+  }
+
+  if (initialStock.packs && initialStock.packs > 0) {
+    const packMovement: StockMovement = {
+      id: `mov-${Date.now()}-pack`,
+      productId: id,
+      type: 'initial',
+      support: 'pack',
+      quantity: Math.max(0, initialStock.packs),
+      reason: 'Stock de départ (cartons fermés)',
+      date: now,
+    };
+    await tx.objectStore('stock_movements').add(packMovement);
   }
 
   await tx.done;
@@ -330,21 +365,77 @@ export async function deleteProduct(productId: string): Promise<void> {
 }
 
 /**
- * Réapprovisionnement de stock (en UNITÉS physiques)
+ * OUVRIR UN CARTON :
+ * Déclenche deux mouvements liés :
+ * -1 carton fermé (support: 'pack')
+ * +packSize unités seules (support: 'unit')
+ */
+export async function openPack(productId: string): Promise<{ packMovement: StockMovement; unitMovement: StockMovement }> {
+  const db = await getDB();
+  const product = await db.get('products', productId);
+  if (!product) throw new Error('Produit introuvable');
+  if (!product.packSize || product.packSize < 2) {
+    throw new Error("Ce produit n'a pas de format carton");
+  }
+
+  const movements = await db.getAllFromIndex('stock_movements', 'by-product', productId);
+  let packs = 0;
+  for (const m of movements) {
+    if (m.support === 'pack') packs += m.quantity;
+  }
+  if (packs < 1) {
+    throw new Error('Aucun carton fermé disponible à ouvrir');
+  }
+
+  const now = new Date().toISOString();
+  const label = product.packLabel || 'carton';
+
+  const packMovement: StockMovement = {
+    id: `mov-open-pack-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    productId,
+    type: 'ouverture',
+    support: 'pack',
+    quantity: -1,
+    reason: `Ouverture de 1 ${label} fermé`,
+    date: now,
+  };
+
+  const unitMovement: StockMovement = {
+    id: `mov-open-unit-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    productId,
+    type: 'ouverture',
+    support: 'unit',
+    quantity: product.packSize,
+    reason: `Déballage de ${product.packSize} unités seules (+${product.packSize})`,
+    date: now,
+  };
+
+  const tx = db.transaction('stock_movements', 'readwrite');
+  await tx.store.add(packMovement);
+  await tx.store.add(unitMovement);
+  await tx.done;
+
+  return { packMovement, unitMovement };
+}
+
+/**
+ * Réapprovisionnement de stock (séparé pour cartons fermés ou unités seules)
  */
 export async function addStockReappro(
   productId: string,
-  unitsToAdd: number,
+  quantity: number,
+  support: StockSupport = 'unit',
   note?: string
 ): Promise<StockMovement> {
-  if (unitsToAdd <= 0) throw new Error('La quantité doit être supérieure à zéro');
+  if (quantity <= 0) throw new Error('La quantité doit être supérieure à zéro');
   const db = await getDB();
   const movement: StockMovement = {
     id: `mov-reappro-${Date.now()}`,
     productId,
     type: 'reappro',
-    quantity: Math.round(unitsToAdd),
-    reason: 'Réapprovisionnement boutique',
+    support,
+    quantity: Math.round(quantity),
+    reason: support === 'pack' ? 'Réapprovisionnement cartons fermés' : 'Réapprovisionnement unités seules',
     note,
     date: new Date().toISOString(),
   };
@@ -354,21 +445,23 @@ export async function addStockReappro(
 }
 
 /**
- * Correction manuelle de stock (en UNITÉS physiques)
+ * Correction manuelle de stock (séparée pour cartons fermés ou unités seules)
  */
 export async function correctStock(
   productId: string,
-  deltaUnits: number,
+  delta: number,
+  support: StockSupport = 'unit',
   reason: CorrectionReason,
   note?: string
 ): Promise<StockMovement> {
-  if (deltaUnits === 0) throw new Error('La correction ne peut pas être nulle');
+  if (delta === 0) throw new Error('La correction ne peut pas être nulle');
   const db = await getDB();
   const movement: StockMovement = {
     id: `mov-corr-${Date.now()}`,
     productId,
     type: 'correction',
-    quantity: Math.round(deltaUnits),
+    support,
+    quantity: Math.round(delta),
     reason,
     note,
     date: new Date().toISOString(),
@@ -430,21 +523,54 @@ export async function recordSale(saleData: {
   const tx = db.transaction(['sales', 'stock_movements'], 'readwrite');
   await tx.objectStore('sales').add(sale);
 
-  // Pour chaque ligne de vente, déduire le nombre exact d'unités physiques :
-  // Si carton/pack : quantité * packSize. Si unité : quantité.
+  // Une ligne unité retire du stock d'unités seules (support: 'unit').
+  // Une ligne carton retire du stock de cartons fermés (support: 'pack').
   for (const item of saleItems) {
-    const unitsToDeduct =
-      item.unitType === 'pack' ? item.quantity * (item.packSize || 1) : item.quantity;
-
+    const support: StockSupport = item.unitType === 'pack' ? 'pack' : 'unit';
     const movement: StockMovement = {
-      id: `mov-sale-${saleId}-${item.productId}-${item.unitType}-${Date.now()}`,
+      id: `mov-sale-${saleId}-${item.productId}-${support}-${Date.now()}`,
       productId: item.productId,
       type: 'vente',
-      quantity: -Math.abs(unitsToDeduct),
+      support,
+      quantity: -Math.abs(item.quantity),
       reason:
-        item.unitType === 'pack'
-          ? `Vente ${item.quantity} ${item.packLabel || 'carton'}(s) de ${item.packSize} unités`
-          : `Vente ${item.quantity} unité(s)`,
+        support === 'pack'
+          ? `Vente ${item.quantity} ${item.packLabel || 'carton'}(s) fermé(s)`
+          : `Vente ${item.quantity} unité(s) seule(s)`,
+      saleId,
+      date: now,
+    };
+    await tx.objectStore('stock_movements').add(movement);
+  }
+
+  await tx.done;
+  return sale;
+}
+
+/**
+ * Annulation d'une vente : réinjecte le bon type de stock (carton ou unité) via des mouvements inverses
+ */
+export async function cancelSale(saleId: string): Promise<Sale> {
+  const db = await getDB();
+  const sale = await db.get('sales', saleId);
+  if (!sale) throw new Error('Vente introuvable');
+  if (sale.isCancelled) throw new Error('Cette vente a déjà été annulée');
+
+  const now = new Date().toISOString();
+  sale.isCancelled = true;
+
+  const tx = db.transaction(['sales', 'stock_movements'], 'readwrite');
+  await tx.objectStore('sales').put(sale);
+
+  for (const item of sale.items) {
+    const support: StockSupport = item.unitType === 'pack' ? 'pack' : 'unit';
+    const movement: StockMovement = {
+      id: `mov-cancel-${saleId}-${item.productId}-${support}-${Date.now()}`,
+      productId: item.productId,
+      type: 'annulation',
+      support,
+      quantity: Math.abs(item.quantity),
+      reason: `Annulation vente (${support === 'pack' ? 'cartons' : 'unités'})`,
       saleId,
       date: now,
     };
@@ -524,7 +650,7 @@ export async function getCustomersWithBalance(): Promise<CustomerWithBalance[]> 
 
   const creditPurchasesMap = new Map<string, { total: number; lastDate?: string }>();
   for (const sale of sales) {
-    if (sale.paymentType === 'credit' && sale.customerId) {
+    if (!sale.isCancelled && sale.paymentType === 'credit' && sale.customerId) {
       const current = creditPurchasesMap.get(sale.customerId) || { total: 0 };
       current.total += sale.totalAmount;
       if (!current.lastDate || sale.date > current.lastDate) {

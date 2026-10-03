@@ -120,7 +120,8 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    const sales7Days = sales.filter((s) => new Date(s.date) >= sevenDaysAgo);
+    const activeSales = sales.filter((s) => !s.isCancelled);
+    const sales7Days = activeSales.filter((s) => new Date(s.date) >= sevenDaysAgo);
 
     const dailyBreakdown: Record<
       string,
@@ -129,12 +130,16 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
         totalEncaisseGNF: number;
         totalCreditGNF: number;
         nombreTransactions: number;
-        produitsVendus: Record<string, number>;
+        unitesVendues: number;
+        cartonsVendus: number;
+        produitsVendus: Record<string, { unites: number; cartons: number }>;
       }
     > = {};
 
     let totalVentes7JoursGNF = 0;
     let totalEncaisse7JoursGNF = 0;
+    let totalUnites7Jours = 0;
+    let totalCartons7Jours = 0;
 
     sales7Days.forEach((s) => {
       const day = s.date.split('T')[0];
@@ -144,6 +149,8 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
           totalEncaisseGNF: 0,
           totalCreditGNF: 0,
           nombreTransactions: 0,
+          unitesVendues: 0,
+          cartonsVendus: 0,
           produitsVendus: {},
         };
       }
@@ -161,13 +168,24 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
 
       s.items.forEach((it) => {
         const pName = it.productName;
-        dailyBreakdown[day].produitsVendus[pName] =
-          (dailyBreakdown[day].produitsVendus[pName] || 0) + it.quantity;
+        if (!dailyBreakdown[day].produitsVendus[pName]) {
+          dailyBreakdown[day].produitsVendus[pName] = { unites: 0, cartons: 0 };
+        }
+
+        if (it.unitType === 'pack') {
+          dailyBreakdown[day].cartonsVendus += it.quantity;
+          dailyBreakdown[day].produitsVendus[pName].cartons += it.quantity;
+          totalCartons7Jours += it.quantity;
+        } else {
+          dailyBreakdown[day].unitesVendues += it.quantity;
+          dailyBreakdown[day].produitsVendus[pName].unites += it.quantity;
+          totalUnites7Jours += it.quantity;
+        }
       });
     });
 
     // Ventes d'aujourd'hui
-    const todaySales = sales.filter((s) => s.date.startsWith(todayStr));
+    const todaySales = activeSales.filter((s) => s.date.startsWith(todayStr));
     const todayTotalVentesGNF = todaySales.reduce((sum, s) => sum + s.totalAmount, 0);
     const todayTotalEncaisseGNF = todaySales
       .filter((s) => s.paymentType === 'cash')
@@ -176,16 +194,37 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
       .filter((s) => s.paymentType === 'credit')
       .reduce((sum, s) => sum + s.totalAmount, 0);
 
-    // Produits sous le seuil d'alerte avec leur stock
+    let todayUnitesVendues = 0;
+    let todayCartonsVendus = 0;
+    todaySales.forEach((s) => {
+      s.items.forEach((it) => {
+        if (it.unitType === 'pack') {
+          todayCartonsVendus += it.quantity;
+        } else {
+          todayUnitesVendues += it.quantity;
+        }
+      });
+    });
+
+    // Produits sous le seuil d'alerte avec leur stock séparé
     const lowStockList = products
       .filter((p) => p.isLowStock)
-      .map((p) => ({
-        nom: p.name,
-        stockActuelUnites: p.currentStock,
-        seuilAlerteUnites: p.alertThreshold,
-        formatCarton: p.packSize ? `${p.packLabel || 'carton'} de ${p.packSize}` : 'aucun',
-        enRupture: p.currentStock <= 0,
-      }));
+      .map((p) => {
+        const hasPack = !!(p.packSize && p.packSize >= 2);
+        const packLabel = p.packLabel || 'carton';
+        return {
+          nom: p.name,
+          stockAffiche: hasPack
+            ? `${p.stockPacks} ${packLabel}s + ${p.stockUnits} unités`
+            : `${p.stockUnits} unités`,
+          stockCartonsFermes: p.stockPacks,
+          stockUnitesSeules: p.stockUnits,
+          seuilAlerteUnites: p.alertThreshold,
+          seuilAlerteCartons: p.alertThresholdPacks ?? 'non configuré',
+          formatCarton: hasPack ? `${packLabel} de ${p.packSize} unités` : 'aucun',
+          ruptureComplete: p.stockUnits <= 0 && p.stockPacks <= 0,
+        };
+      });
 
     // Clients avec leur dette
     const indebtedClients = customers
@@ -200,18 +239,30 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
       0
     );
 
+    const totalCartonsEnStock = products.reduce((sum, p) => sum + p.stockPacks, 0);
+    const totalUnitesEnStock = products.reduce((sum, p) => sum + p.stockUnits, 0);
+
     return {
       dateAujourdhui: todayStr,
       bilanAujourdhui: {
         chiffreAffairesTotalGNF: todayTotalVentesGNF,
         encaisseComptantGNF: todayTotalEncaisseGNF,
         donneACreditGNF: todayTotalCreditGNF,
+        unitesSeulesVendues: todayUnitesVendues,
+        cartonsFermesVendus: todayCartonsVendus,
         nombreVentesAujourdhui: todaySales.length,
       },
       bilan7DerniersJours: {
         totalVentes7JoursGNF,
         totalEncaisse7JoursGNF,
+        totalUnitesVendues7Jours: totalUnites7Jours,
+        totalCartonsVendus7Jours: totalCartons7Jours,
         detailParJour: dailyBreakdown,
+      },
+      etatGlobalStocks: {
+        totalCartonsFermesEnStock: totalCartonsEnStock,
+        totalUnitesSeulesEnStock: totalUnitesEnStock,
+        resume: `${totalCartonsEnStock} cartons fermés + ${totalUnitesEnStock} unités seules en stock dans la boutique`,
       },
       produitsARacheterSousSeuil: lowStockList,
       totalProduitsAlerte: lowStockList.length,
