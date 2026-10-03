@@ -192,7 +192,6 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
       .filter((c) => c.currentDebt > 0)
       .map((c) => ({
         nom: c.name,
-        telephone: c.phone,
         detteRestanteGNF: c.currentDebt,
       }));
 
