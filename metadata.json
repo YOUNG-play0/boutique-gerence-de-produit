@@ -1,0 +1,6 @@
+{
+  "name": "Boutique Guinée - Caisse & Stock",
+  "description": "Application mobile hors-ligne de caisse, scan QR, stock automatique, carnet de crédit et bilan journalier en Franc Guinéen (GNF).",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

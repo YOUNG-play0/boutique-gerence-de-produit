@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ea580c"/>
+      <stop offset="100%" stop-color="#c2410c"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#7c2d12" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  
+  <!-- Subtle top accent bar: Guinea red, yellow, green subtle rounded stripe -->
+  <g transform="translate(156, 76)">
+    <rect x="0" y="0" width="60" height="12" rx="6" fill="#ef4444"/>
+    <rect x="70" y="0" width="60" height="12" rx="6" fill="#eab308"/>
+    <rect x="140" y="0" width="60" height="12" rx="6" fill="#22c55e"/>
+  </g>
+
+  <!-- Shop Front & Cash register icon -->
+  <g filter="url(#shadow)" fill="#ffffff" transform="translate(106, 120)">
+    <!-- Store Awning -->
+    <path d="M20 70 L280 70 L260 20 L40 20 Z" fill="#ffffff" opacity="0.95"/>
+    <path d="M20 70 Q45 95 70 70 Q95 95 120 70 Q145 95 170 70 Q195 95 220 70 Q245 95 270 70 Q285 85 280 70 Z" fill="#fed7aa"/>
+    
+    <!-- Shop base / Bag & Basket -->
+    <rect x="45" y="80" width="210" height="160" rx="16" fill="#ffffff"/>
+    
+    <!-- Cash Register Screen & Currency Symbol -->
+    <rect x="70" y="105" width="160" height="60" rx="10" fill="#ffedd5"/>
+    <text x="150" y="148" font-family="system-ui, sans-serif" font-size="34" font-weight="900" fill="#c2410c" text-anchor="middle">GNF</text>
+    
+    <!-- Drawer / Buttons -->
+    <circle cx="85" cy="195" r="10" fill="#ea580c"/>
+    <circle cx="115" cy="195" r="10" fill="#ea580c"/>
+    <circle cx="145" cy="195" r="10" fill="#ea580c"/>
+    <rect x="175" y="185" width="55" height="20" rx="6" fill="#16a34a"/>
+  </g>
+</svg>
