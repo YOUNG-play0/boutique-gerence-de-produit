@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   UserPlus,
   MessageCircle,
@@ -86,6 +86,7 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
   const [paymentAmount, setPaymentAmount] = useState<number | ''>('');
   const [paymentNote, setPaymentNote] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
 
   // Formulaire nouveau client
   const [newName, setNewName] = useState('');
@@ -100,15 +101,20 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
   const [manualDebtDate, setManualDebtDate] = useState<string>('');
   const [manualDebtNote, setManualDebtNote] = useState<string>('');
   const [isProcessingDebt, setIsProcessingDebt] = useState(false);
+  const isProcessingDebtRef = useRef(false);
   const [debtError, setDebtError] = useState<string | null>(null);
 
   // Modal historique complet
   const [historyCustomer, setHistoryCustomer] = useState<CustomerWithBalance | null>(null);
   const [customerHistoryList, setCustomerHistoryList] = useState<HistoryItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [visibleHistoryLimit, setVisibleHistoryLimit] = useState(50);
   const [cancellingDebtId, setCancellingDebtId] = useState<string | null>(null);
   const [debtToCancel, setDebtToCancel] = useState<CustomerDebtEntry | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
+
+  // Pagination / Chargement progressif 50 par 50 (Point C.14)
+  const [visibleCustomersLimit, setVisibleCustomersLimit] = useState(50);
 
   const filteredCustomers = customers.filter(
     (c) =>
@@ -153,9 +159,10 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
 
   const handleConfirmPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCustomerForPayment || !paymentAmount || paymentAmount <= 0) return;
+    if (!selectedCustomerForPayment || !paymentAmount || paymentAmount <= 0 || isProcessing || isProcessingRef.current) return;
 
     try {
+      isProcessingRef.current = true;
       setIsProcessing(true);
       await recordCreditPayment(
         selectedCustomerForPayment.id,
@@ -172,6 +179,7 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
     } catch (err) {
       console.error(err);
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   };
@@ -186,13 +194,14 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
 
   const handleConfirmAddDebt = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!debtModalCustomer) return;
+    if (!debtModalCustomer || isProcessingDebt || isProcessingDebtRef.current) return;
     if (!manualDebtAmount || Number(manualDebtAmount) <= 0) {
       setDebtError('Veuillez entrer un montant supérieur à zéro');
       return;
     }
 
     try {
+      isProcessingDebtRef.current = true;
       setIsProcessingDebt(true);
       setDebtError(null);
 
@@ -221,6 +230,7 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
     } catch (err: unknown) {
       setDebtError(err instanceof Error ? err.message : 'Erreur lors de l’enregistrement');
     } finally {
+      isProcessingDebtRef.current = false;
       setIsProcessingDebt(false);
     }
   };
@@ -372,116 +382,128 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
             </p>
           </div>
         ) : (
-          filteredCustomers.map((customer) => {
-            const hasDebt = customer.currentDebt > 0;
-            const waLink = createWhatsAppReminderLink(
-              customer.phone,
-              customer.name,
-              customer.currentDebt,
-              shopSettings.shopName
-            );
+          <>
+            {filteredCustomers.slice(0, visibleCustomersLimit).map((customer) => {
+              const hasDebt = customer.currentDebt > 0;
+              const waLink = createWhatsAppReminderLink(
+                customer.phone,
+                customer.name,
+                customer.currentDebt,
+                shopSettings.shopName
+              );
 
-            return (
-              <div
-                key={customer.id}
-                className={`bg-white rounded-3xl p-4 border-2 shadow-xs transition ${
-                  hasDebt ? 'border-amber-300' : 'border-slate-200/80'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg ${
-                        hasDebt ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      {customer.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-black text-slate-900">{customer.name}</h3>
-                      <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
-                        <Phone className="w-3 h-3 text-slate-400" />
-                        <span>{customer.phone}</span>
+              return (
+                <div
+                  key={customer.id}
+                  className={`bg-white rounded-3xl p-4 border-2 shadow-xs transition ${
+                    hasDebt ? 'border-amber-300' : 'border-slate-200/80'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg ${
+                          hasDebt ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        {customer.name.charAt(0).toUpperCase()}
                       </div>
-                      {customer.address && (
-                        <div className="text-[11px] text-slate-400 truncate max-w-[200px]">
-                          📍 {customer.address}
+                      <div>
+                        <h3 className="text-sm font-black text-slate-900">{customer.name}</h3>
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+                          <Phone className="w-3 h-3 text-slate-400" />
+                          <span>{customer.phone}</span>
                         </div>
-                      )}
+                        {customer.address && (
+                          <div className="text-[11px] text-slate-400 truncate max-w-[200px]">
+                            📍 {customer.address}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Debt amount */}
+                    <div className="text-right">
+                      <div className="text-[10px] text-slate-400 font-semibold uppercase">
+                        Reste dû
+                      </div>
+                      <div
+                        className={`text-base font-black ${
+                          hasDebt ? 'text-rose-600' : 'text-emerald-600'
+                        }`}
+                      >
+                        {formatGNF(customer.currentDebt)}
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Total réglé : {formatGNF(customer.totalPayments)}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Debt amount */}
-                  <div className="text-right">
-                    <div className="text-[10px] text-slate-400 font-semibold uppercase">
-                      Reste dû
-                    </div>
-                    <div
-                      className={`text-base font-black ${
-                        hasDebt ? 'text-rose-600' : 'text-emerald-600'
-                      }`}
-                    >
-                      {formatGNF(customer.currentDebt)}
-                    </div>
-                    <div className="text-[10px] text-slate-400">
-                      Total réglé : {formatGNF(customer.totalPayments)}
-                    </div>
-                  </div>
-                </div>
+                  {/* Action buttons */}
+                  <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2">
+                    {/* WhatsApp Reminder Button */}
+                    {hasDebt ? (
+                      <a
+                        href={waLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 min-w-[130px] py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm shadow-emerald-600/20 transition"
+                        title="Ouvrir WhatsApp avec message pré-rempli"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        <span>Rappel WhatsApp</span>
+                      </a>
+                    ) : (
+                      <div className="flex-1 py-2 text-center text-xs text-emerald-600 font-bold bg-emerald-50 rounded-xl">
+                        ✓ À jour de ses paiements
+                      </div>
+                    )}
 
-                {/* Action buttons */}
-                <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2">
-                  {/* WhatsApp Reminder Button */}
-                  {hasDebt ? (
-                    <a
-                      href={waLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex-1 min-w-[130px] py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm shadow-emerald-600/20 transition"
-                      title="Ouvrir WhatsApp avec message pré-rempli"
-                    >
-                      <MessageCircle className="w-4 h-4" />
-                      <span>Rappel WhatsApp</span>
-                    </a>
-                  ) : (
-                    <div className="flex-1 py-2 text-center text-xs text-emerald-600 font-bold bg-emerald-50 rounded-xl">
-                      ✓ À jour de ses paiements
-                    </div>
-                  )}
+                    {/* Record Payment Button */}
+                    {hasDebt && (
+                      <button
+                        onClick={() => handleOpenPayment(customer)}
+                        className="flex-1 min-w-[120px] py-2.5 px-3 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm shadow-amber-600/20 transition"
+                      >
+                        <ArrowDownLeft className="w-4 h-4" />
+                        <span>Règlement reçu</span>
+                      </button>
+                    )}
 
-                  {/* Record Payment Button */}
-                  {hasDebt && (
+                    {/* Bouton : Ajouter une dette sans vente */}
                     <button
-                      onClick={() => handleOpenPayment(customer)}
-                      className="flex-1 min-w-[120px] py-2.5 px-3 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm shadow-amber-600/20 transition"
+                      onClick={() => handleOpenAddDebtModal(customer)}
+                      className="py-2.5 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 active:scale-95 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition"
+                      title="Ajouter une dette sans vente (dette manuelle)"
                     >
-                      <ArrowDownLeft className="w-4 h-4" />
-                      <span>Règlement reçu</span>
+                      <FilePlus className="w-4 h-4 text-rose-600" />
+                      <span>Ajouter une dette</span>
                     </button>
-                  )}
 
-                  {/* Bouton : Ajouter une dette sans vente */}
-                  <button
-                    onClick={() => handleOpenAddDebtModal(customer)}
-                    className="py-2.5 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 active:scale-95 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition"
-                    title="Ajouter une dette sans vente (dette manuelle)"
-                  >
-                    <FilePlus className="w-4 h-4 text-rose-600" />
-                    <span>Ajouter une dette</span>
-                  </button>
-
-                  {/* History button */}
-                  <button
-                    onClick={() => handleViewHistory(customer)}
-                    className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition"
-                    title="Voir l'historique complet (dettes, ventes, règlements)"
-                  >
-                    <History className="w-4 h-4" />
-                  </button>
+                    {/* History button */}
+                    <button
+                      onClick={() => handleViewHistory(customer)}
+                      className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition"
+                      title="Voir l'historique complet (dettes, ventes, règlements)"
+                    >
+                      <History className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            );
-          })
+              );
+            })}
+
+            {filteredCustomers.length > visibleCustomersLimit && (
+              <button
+                type="button"
+                onClick={() => setVisibleCustomersLimit((prev) => prev + 50)}
+                className="w-full py-3 bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-700 font-bold text-xs rounded-2xl transition"
+              >
+                Afficher 50 clients de plus ({filteredCustomers.length - visibleCustomersLimit} restants)
+              </button>
+            )}
+          </>
         )}
       </div>
 
@@ -558,6 +580,7 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
                 <div className="relative">
                   <input
                     type="number"
+                    inputMode="numeric"
                     min="0"
                     step="1"
                     placeholder="Ex: 150000"
@@ -631,6 +654,7 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
                 <div className="relative">
                   <input
                     type="number"
+                    inputMode="numeric"
                     min="1"
                     step="1"
                     required
@@ -684,7 +708,7 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
               <button
                 type="submit"
                 disabled={isProcessingDebt}
-                className="w-full py-3.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-xs rounded-2xl shadow-lg shadow-rose-600/30 transition flex items-center justify-center gap-2"
+                className="w-full py-3.5 bg-rose-600 hover:bg-rose-700 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none text-white font-black text-xs rounded-2xl shadow-lg shadow-rose-600/30 transition flex items-center justify-center gap-2"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>Enregistrer la dette</span>
@@ -729,6 +753,7 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
                 <div className="relative">
                   <input
                     type="number"
+                    inputMode="numeric"
                     min="1"
                     max={selectedCustomerForPayment.currentDebt}
                     required
@@ -779,7 +804,7 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
               <button
                 type="submit"
                 disabled={isProcessing}
-                className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2"
+                className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none text-white font-black text-sm rounded-2xl shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2"
               >
                 <CheckCircle2 className="w-5 h-5" />
                 <span>Enregistrer l'encaissement</span>
@@ -855,8 +880,9 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
                   Aucune opération enregistrée pour ce client.
                 </p>
               ) : (
-                customerHistoryList.map((item) => {
-                  if (item.kind === 'debt') {
+                <>
+                  {customerHistoryList.slice(0, visibleHistoryLimit).map((item) => {
+                    if (item.kind === 'debt') {
                     // Dette manuelle ou initiale
                     return (
                       <div
@@ -1002,8 +1028,19 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
                       </div>
                     </div>
                   );
-                })
-              )}
+                })}
+
+                {customerHistoryList.length > visibleHistoryLimit && (
+                  <button
+                    type="button"
+                    onClick={() => setVisibleHistoryLimit((prev) => prev + 50)}
+                    className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 active:scale-98 text-slate-700 font-bold text-xs rounded-xl transition"
+                  >
+                    Afficher 50 opérations de plus ({customerHistoryList.length - visibleHistoryLimit} restantes)
+                  </button>
+                )}
+              </>
+            )}
             </div>
 
             <button

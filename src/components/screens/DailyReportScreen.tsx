@@ -21,40 +21,71 @@ interface DailyReportScreenProps {
   onCancelSale?: (saleId: string) => Promise<void>;
 }
 
+function getLocalDateString(d: Date = new Date()): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export const DailyReportScreen: React.FC<DailyReportScreenProps> = ({
   sales,
   payments,
   products,
   onCancelSale,
 }) => {
-  const todayStr = new Date().toISOString().split('T')[0];
-  const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [selectedDate, setSelectedDate] = useState(() => getLocalDateString());
   const [cancellingSaleId, setCancellingSaleId] = useState<string | null>(null);
+  const [visibleSalesLimit, setVisibleSalesLimit] = useState(50);
 
-  // Exclure les ventes annulées des totaux financiers
+  // Bornes de la journée en HEURE LOCALE (00:00:00.000 à 23:59:59.999) - Point A.5
+  const isDateInSelectedDay = useMemo(() => {
+    const parts = selectedDate.split('-').map(Number);
+    if (parts.length !== 3) return () => false;
+    const [year, month, day] = parts;
+    const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0).getTime();
+    const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999).getTime();
+
+    return (isoDate: string) => {
+      const t = new Date(isoDate).getTime();
+      return t >= startOfDay && t <= endOfDay;
+    };
+  }, [selectedDate]);
+
+  // Exclure les ventes annulées des totaux financiers (Point A.4 & A.5)
   const daySales = useMemo(() => {
-    return sales.filter((s) => s.date.startsWith(selectedDate));
-  }, [sales, selectedDate]);
+    return sales
+      .filter((s) => isDateInSelectedDay(s.date))
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [sales, isDateInSelectedDay]);
 
   const activeDaySales = useMemo(() => {
     return daySales.filter((s) => !s.isCancelled);
   }, [daySales]);
 
   const dayPayments = useMemo(() => {
-    return payments.filter((p) => p.date.startsWith(selectedDate));
-  }, [payments, selectedDate]);
+    return payments.filter((p) => isDateInSelectedDay(p.date));
+  }, [payments, isDateInSelectedDay]);
 
-  const totalSalesAmount = activeDaySales.reduce((sum, s) => sum + s.totalAmount, 0);
+  const totalSalesAmount = Math.round(
+    activeDaySales.reduce((sum, s) => sum + s.totalAmount, 0)
+  );
 
-  const cashSalesAmount = activeDaySales
-    .filter((s) => s.paymentType === 'cash')
-    .reduce((sum, s) => sum + s.totalAmount, 0);
-  const creditPaymentsAmount = dayPayments.reduce((sum, p) => sum + p.amount, 0);
+  const cashSalesAmount = Math.round(
+    activeDaySales
+      .filter((s) => s.paymentType === 'cash')
+      .reduce((sum, s) => sum + s.totalAmount, 0)
+  );
+  const creditPaymentsAmount = Math.round(
+    dayPayments.reduce((sum, p) => sum + p.amount, 0)
+  );
   const totalEncaisse = cashSalesAmount + creditPaymentsAmount;
 
-  const totalCreditGiven = activeDaySales
-    .filter((s) => s.paymentType === 'credit')
-    .reduce((sum, s) => sum + s.totalAmount, 0);
+  const totalCreditGiven = Math.round(
+    activeDaySales
+      .filter((s) => s.paymentType === 'credit')
+      .reduce((sum, s) => sum + s.totalAmount, 0)
+  );
 
   // Décompte séparé des unités et des cartons
   let totalUnitsSoldOnly = 0;
@@ -109,7 +140,7 @@ export const DailyReportScreen: React.FC<DailyReportScreenProps> = ({
   }, [activeDaySales]);
 
   const lowStockProducts = products.filter((p) => p.isLowStock);
-  const isToday = selectedDate === todayStr;
+  const isToday = selectedDate === getLocalDateString();
 
   const handleShareSummary = () => {
     const summary = `📊 *BILAN DU ${selectedDate}*
@@ -343,7 +374,7 @@ export const DailyReportScreen: React.FC<DailyReportScreenProps> = ({
           <p className="text-xs text-slate-400 py-6 text-center">Aucune vente enregistrée pour cette date.</p>
         ) : (
           <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
-            {daySales.map((sale) => (
+            {daySales.slice(0, visibleSalesLimit).map((sale) => (
               <div
                 key={sale.id}
                 className={`p-3 border rounded-2xl flex items-center justify-between text-xs transition ${
@@ -404,6 +435,16 @@ export const DailyReportScreen: React.FC<DailyReportScreenProps> = ({
                 </div>
               </div>
             ))}
+
+            {daySales.length > visibleSalesLimit && (
+              <button
+                type="button"
+                onClick={() => setVisibleSalesLimit((prev) => prev + 50)}
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition"
+              >
+                Afficher 50 ventes de plus ({daySales.length - visibleSalesLimit} restantes)
+              </button>
+            )}
           </div>
         )}
       </div>

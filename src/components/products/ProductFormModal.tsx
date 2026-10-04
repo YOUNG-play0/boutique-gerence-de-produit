@@ -262,22 +262,39 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     if (!name.trim()) {
       setError('Veuillez entrer le nom du produit.');
       return;
     }
-    if (price === '' || price < 0) {
-      setError("Veuillez spécifier un prix à l'unité valide en GNF.");
+
+    const numPrice = Number(price);
+    if (price === '' || isNaN(numPrice) || numPrice <= 0) {
+      setError("Veuillez spécifier un prix à l'unité valide supérieur à zéro.");
+      return;
+    }
+
+    if (numPrice > 100_000_000) {
+      setError("Le prix unitaire ne peut pas dépasser 100 000 000 GNF.");
       return;
     }
 
     if (hasPack) {
-      if (!packSize || Number(packSize) < 2) {
-        setError("Le nombre d'unités dans un carton doit être d'au moins 2.");
+      const numPackSize = Number(packSize);
+      if (!packSize || isNaN(numPackSize) || numPackSize < 2 || numPackSize > 10_000) {
+        setError("Le nombre d'unités dans un carton doit être compris entre 2 et 10 000.");
         return;
       }
-      if (packPrice === '' || Number(packPrice) < 0) {
-        setError('Le prix du carton doit être valide.');
+
+      const numPackPrice = Number(packPrice);
+      if (packPrice === '' || isNaN(numPackPrice) || numPackPrice <= 0) {
+        setError('Le prix du carton doit être supérieur à zéro.');
+        return;
+      }
+
+      if (numPackPrice > 100_000_000) {
+        setError('Le prix du carton ne peut pas dépasser 100 000 000 GNF.');
         return;
       }
     }

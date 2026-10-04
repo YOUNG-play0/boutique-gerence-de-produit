@@ -35,8 +35,24 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (quantity <= 0) {
-      setError('Veuillez entrer une quantité positive.');
+    if (isSubmitting) return;
+
+    if (!quantity || quantity <= 0 || !Number.isInteger(quantity)) {
+      setError('Veuillez entrer une quantité entière positive.');
+      return;
+    }
+
+    if (quantity > 100_000) {
+      setError('La quantité ne peut pas dépasser 100 000.');
+      return;
+    }
+
+    const currentStock = targetSupport === 'pack' ? product.stockPacks : product.stockUnits;
+    if (mode === 'correction' && isNegative && quantity > currentStock) {
+      const label = targetSupport === 'pack' ? packLabel : 'unité';
+      setError(
+        `Retrait impossible : le stock disponible est de ${currentStock} ${label}(s). Aucun stock négatif n'est autorisé.`
+      );
       return;
     }
 
@@ -252,6 +268,7 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
               </button>
               <input
                 type="number"
+                inputMode="numeric"
                 min="1"
                 value={quantity}
                 onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}

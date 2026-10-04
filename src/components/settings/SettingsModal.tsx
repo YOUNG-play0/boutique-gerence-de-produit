@@ -1,7 +1,25 @@
-import React, { useState } from 'react';
-import { X, Settings, KeyRound, Check, Lock, AlertCircle, CheckCircle2, Download, Smartphone } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import {
+  X,
+  Settings,
+  KeyRound,
+  Check,
+  Lock,
+  AlertCircle,
+  CheckCircle2,
+  Download,
+  Smartphone,
+  Upload,
+  Database,
+  RefreshCw,
+} from 'lucide-react';
 import { ShopSettings } from '../../types';
-import { updateShopSettings, changeShopPin } from '../../services/db';
+import {
+  updateShopSettings,
+  changeShopPin,
+  generateBackupData,
+  restoreBackupData,
+} from '../../services/db';
 import { triggerHaptic } from '../../utils/formatters';
 
 interface SettingsModalProps {
@@ -10,6 +28,7 @@ interface SettingsModalProps {
   onClose: () => void;
   onSettingsUpdated: (newSettings: ShopSettings) => void;
   onLockScreen: () => void;
+  onRefreshAllData?: () => void;
   isInstalled?: boolean;
   isIOS?: boolean;
   onInstall?: () => void;
@@ -22,6 +41,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   onSettingsUpdated,
   onLockScreen,
+  onRefreshAllData,
   isInstalled = false,
   isIOS = false,
   onInstall,
@@ -43,8 +63,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [pinError, setPinError] = useState<string | null>(null);
   const [pinSuccess, setPinSuccess] = useState<string | null>(null);
 
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [backupSuccess, setBackupSuccess] = useState<string | null>(null);
+
   const [isSubmittingInfo, setIsSubmittingInfo] = useState(false);
   const [isSubmittingPin, setIsSubmittingPin] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) return null;
 
@@ -361,6 +388,133 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             Modifier le code PIN
           </button>
         </form>
+
+        {/* Section 3 : Sauvegarde & Restauration (Export / Import - Point B.10) */}
+        <div className="pt-4 border-t border-slate-200 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-black uppercase text-slate-700 tracking-wider">
+            <Database className="w-4 h-4 text-amber-600" />
+            <span>Sauvegarde & Restauration</span>
+          </div>
+
+          <p className="text-[11px] text-slate-500 leading-normal">
+            Exportez toutes les données (produits, stocks, ventes, clients, dettes, photos et réglages) dans un fichier JSON pour les mettre en lieu sûr ou les transférer vers un autre appareil.
+          </p>
+
+          {backupError && (
+            <div className="p-2.5 bg-rose-50 text-rose-700 rounded-xl text-xs font-semibold border border-rose-200 flex items-center gap-1.5">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-500" />
+              <span>{backupError}</span>
+            </div>
+          )}
+
+          {backupSuccess && (
+            <div className="p-2.5 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-semibold border border-emerald-200 flex items-center gap-1.5">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+              <span>{backupSuccess}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            {/* Télécharger la sauvegarde */}
+            <button
+              type="button"
+              disabled={isExporting}
+              onClick={async () => {
+                try {
+                  setIsExporting(true);
+                  setBackupError(null);
+                  setBackupSuccess(null);
+                  const { jsonString } = await generateBackupData();
+                  const blob = new Blob([jsonString], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  const dateStr = new Date().toISOString().split('T')[0];
+                  const safeName = shopName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+                  a.href = url;
+                  a.download = `sauvegarde_${safeName}_${dateStr}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  triggerHaptic(50);
+                  setBackupSuccess('Sauvegarde téléchargée avec succès !');
+                  setTimeout(() => setBackupSuccess(null), 4000);
+                } catch (err: unknown) {
+                  setBackupError(err instanceof Error ? err.message : "Erreur lors de l'export.");
+                } finally {
+                  setIsExporting(false);
+                }
+              }}
+              className="py-3 px-3 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-2"
+            >
+              {isExporting ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              <span>Sauvegarder</span>
+            </button>
+
+            {/* Importer la sauvegarde */}
+            <button
+              type="button"
+              disabled={isImporting}
+              onClick={() => fileInputRef.current?.click()}
+              className="py-3 px-3 bg-white hover:bg-slate-50 active:scale-95 border border-slate-300 text-slate-800 font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-2"
+            >
+              {isImporting ? (
+                <RefreshCw className="w-4 h-4 animate-spin text-amber-600" />
+              ) : (
+                <Upload className="w-4 h-4 text-amber-600" />
+              )}
+              <span>Restaurer</span>
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+
+                if (
+                  !window.confirm(
+                    "Attention : la restauration va remplacer toutes les données actuelles de la boutique par celles du fichier. Voulez-vous continuer ?"
+                  )
+                ) {
+                  e.target.value = '';
+                  return;
+                }
+
+                try {
+                  setIsImporting(true);
+                  setBackupError(null);
+                  setBackupSuccess(null);
+                  const text = await file.text();
+                  let parsed: unknown;
+                  try {
+                    parsed = JSON.parse(text);
+                  } catch {
+                    throw new Error('Le fichier sélectionné n’est pas un JSON valide.');
+                  }
+
+                  await restoreBackupData(parsed);
+                  triggerHaptic(80);
+                  setBackupSuccess('Données restaurées avec succès !');
+                  onRefreshAllData?.();
+                  setTimeout(() => setBackupSuccess(null), 4000);
+                } catch (err: unknown) {
+                  setBackupError(
+                    err instanceof Error ? err.message : 'Erreur lors de la restauration.'
+                  );
+                } finally {
+                  setIsImporting(false);
+                  e.target.value = '';
+                }
+              }}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );

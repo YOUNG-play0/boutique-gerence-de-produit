@@ -87,6 +87,26 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
       const scanner = scannerRef.current;
       scannerRef.current = null;
 
+      // Arrêt forcé et propre de tous les flux média vidéo existants dans le conteneur (Point D.18)
+      try {
+        const container = document.getElementById(scannerContainerId);
+        const videos = container?.querySelectorAll('video');
+        videos?.forEach((video) => {
+          if (video.srcObject instanceof MediaStream) {
+            video.srcObject.getTracks().forEach((track) => {
+              try {
+                track.stop();
+              } catch {
+                // ignore
+              }
+            });
+            video.srcObject = null;
+          }
+        });
+      } catch (domErr) {
+        console.debug('Tracks direct stop handled:', domErr);
+      }
+
       if (scanner) {
         try {
           const state = scanner.getState();
@@ -186,10 +206,12 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
         const errStr = err instanceof Error ? err.message : String(err);
         console.warn('Erreur activation caméra:', errStr);
 
-        if (errStr.includes('NotAllowedError') || errStr.includes('Permission')) {
-          setErrorMessage("L'accès à la caméra a été refusé. Veuillez autoriser la caméra dans les réglages.");
+        if (errStr.includes('NotAllowedError') || errStr.includes('Permission') || errStr.includes('denied')) {
+          setErrorMessage("L'accès à la caméra a été refusé. Veuillez autoriser la caméra dans les réglages de votre appareil.");
+        } else if (errStr.includes('NotFoundError') || errStr.includes('DevicesNotFoundError')) {
+          setErrorMessage("Aucune caméra disponible sur cet appareil. Utilisez la saisie manuelle ci-dessous.");
         } else {
-          setErrorMessage("Caméra non disponible sur cet appareil. Utilisez les boutons de test rapide ci-dessous.");
+          setErrorMessage("Caméra non disponible sur cet appareil. Utilisez les boutons de test rapide ou la saisie manuelle.");
         }
       } finally {
         isStartingRef.current = false;
@@ -199,23 +221,45 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
     startScanner();
 
+    // Arrêt de la caméra si l'application passe en arrière-plan ou change d'onglet (Point D.18)
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopScannerSafe();
+        onClose();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handleVisibilityChange);
+
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handleVisibilityChange);
       sessionIdRef.current += 1;
       stopScannerSafe();
     };
-  }, [isOpen]);
+  }, [isOpen, onClose]);
+
+  const lastScannedItemRef = useRef<{ code: string; timestamp: number } | null>(null);
 
   const handleDecodedText = (decodedText: string) => {
     // Si la fenêtre de quantité est déjà ouverte, ne pas écraser
     if (scannedProduct) return;
 
+    const cleanText = decodedText.trim();
+    if (!cleanText) return;
+
     const now = Date.now();
-    if (now - lastScanTimestampRef.current < 1200) {
+    // Anti double scan du même code en moins d'une seconde (Point D.20)
+    if (
+      lastScannedItemRef.current &&
+      lastScannedItemRef.current.code === cleanText &&
+      now - lastScannedItemRef.current.timestamp < 1000
+    ) {
       return;
     }
+    lastScannedItemRef.current = { code: cleanText, timestamp: now };
     lastScanTimestampRef.current = now;
 
-    const cleanText = decodedText.trim();
     let matchedProduct: ProductWithStock | undefined;
 
     matchedProduct = products.find(
@@ -242,10 +286,14 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
       setQuantityInputStr('1');
       setErrorMessage(null);
     } else {
-      // 8. Si le QR scanné ne correspond à aucun produit, affiche "Produit introuvable" et laisse la caméra ouverte
+      // Distinction claire : produit supprimé vs code QR inconnu (Point D.19)
       triggerHaptic(120);
-      setErrorMessage('Produit introuvable');
-      setTimeout(() => setErrorMessage(null), 3000);
+      if (cleanText.includes('prod-')) {
+        setErrorMessage("Ce code correspond à un produit qui a été supprimé de la boutique.");
+      } else {
+        setErrorMessage("Code QR non reconnu : aucun produit ne correspond à ce code.");
+      }
+      setTimeout(() => setErrorMessage(null), 3500);
     }
   };
 
@@ -683,7 +731,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                 >
                   <div className="w-7 h-7 rounded-lg overflow-hidden bg-slate-800 flex items-center justify-center flex-shrink-0">
                     {prod.photo ? (
-                      <img src={prod.photo} alt={prod.name} className="w-full h-full object-cover" />
+                      <img src={prod.photo} alt={prod.name} className="w-full h-full object-cover" loading="lazy" />
                     ) : (
                       <span className="text-sm">{prod.imageUrl || '📦'}</span>
                     )}

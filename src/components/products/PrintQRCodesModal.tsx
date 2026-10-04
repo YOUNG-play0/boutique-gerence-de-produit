@@ -388,7 +388,7 @@ export const PrintQRCodesModal: React.FC<PrintQRCodesModalProps> = ({
                       />
                       <div className="w-6 h-6 rounded-md bg-amber-50 flex items-center justify-center text-xs flex-shrink-0 border border-amber-100 overflow-hidden">
                         {prod.photo ? (
-                          <img src={prod.photo} alt={prod.name} className="w-full h-full object-cover" />
+                          <img src={prod.photo} alt={prod.name} className="w-full h-full object-cover" loading="lazy" />
                         ) : (
                           <span>{prod.imageUrl || '📦'}</span>
                         )}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { X, Trash2, Plus, Minus, CheckCircle, CreditCard, UserPlus, Phone, User, Layers, Package, Box } from 'lucide-react';
 import { CartItem, CustomerWithBalance, ProductWithStock, Sale, UnitType } from '../../types';
@@ -36,6 +36,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const [newCustName, setNewCustName] = useState('');
   const [newCustPhone, setNewCustPhone] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -44,9 +45,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const totalItemCount = items.reduce((sum, item) => sum + item.quantity, 0);
 
   const handleCashCheckout = async () => {
-    if (items.length === 0 || isProcessing) return;
+    if (items.length === 0 || isProcessing || isProcessingRef.current) return;
 
     try {
+      isProcessingRef.current = true;
       setIsProcessing(true);
       setError(null);
 
@@ -73,18 +75,20 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Erreur lors du paiement');
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   };
 
   const handleOpenCreditFlow = () => {
-    if (items.length === 0) return;
+    if (items.length === 0 || isProcessing || isProcessingRef.current) return;
     setShowCreditModal(true);
   };
 
   const handleConfirmCredit = async () => {
-    if (isProcessing) return;
+    if (isProcessing || isProcessingRef.current) return;
     try {
+      isProcessingRef.current = true;
       setIsProcessing(true);
       setError(null);
 
@@ -95,6 +99,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       if (isNewCustomer) {
         if (!newCustName.trim()) {
           setError('Veuillez entrer le nom du client');
+          isProcessingRef.current = false;
           setIsProcessing(false);
           return;
         }
@@ -109,6 +114,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         const found = customers.find((c) => c.id === selectedCustomerId);
         if (!found) {
           setError('Veuillez sélectionner un client ou en créer un nouveau');
+          isProcessingRef.current = false;
           setIsProcessing(false);
           return;
         }
@@ -134,6 +140,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Erreur lors de l’enregistrement');
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   };
@@ -335,7 +342,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               <button
                 onClick={handleCashCheckout}
                 disabled={isProcessing}
-                className="py-4 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-sm flex flex-col items-center justify-center shadow-lg shadow-emerald-600/30 transition"
+                className="py-4 px-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none text-white font-black text-sm flex flex-col items-center justify-center shadow-lg shadow-emerald-600/30 transition"
               >
                 <div className="flex items-center gap-1.5 mb-1">
                   <CheckCircle className="w-5 h-5" />
@@ -349,7 +356,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               <button
                 onClick={handleOpenCreditFlow}
                 disabled={isProcessing}
-                className="py-4 px-3 rounded-2xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-sm flex flex-col items-center justify-center shadow-lg shadow-amber-600/30 transition"
+                className="py-4 px-3 rounded-2xl bg-amber-600 hover:bg-amber-700 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none text-white font-black text-sm flex flex-col items-center justify-center shadow-lg shadow-amber-600/30 transition"
               >
                 <div className="flex items-center gap-1.5 mb-1">
                   <CreditCard className="w-5 h-5" />
@@ -473,6 +480,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     <Phone className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input
                       type="tel"
+                      inputMode="numeric"
                       placeholder="Ex: 622 00 00 00"
                       value={newCustPhone}
                       onChange={(e) => setNewCustPhone(e.target.value)}
@@ -488,7 +496,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 type="button"
                 onClick={handleConfirmCredit}
                 disabled={isProcessing}
-                className="w-full py-3.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-amber-600/30 transition flex items-center justify-center gap-2"
+                className="w-full py-3.5 bg-amber-600 hover:bg-amber-700 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none text-white font-black text-sm rounded-2xl shadow-lg shadow-amber-600/30 transition flex items-center justify-center gap-2"
               >
                 <UserPlus className="w-4 h-4" />
                 <span>Confirmer le crédit de {formatGNF(totalAmount)}</span>

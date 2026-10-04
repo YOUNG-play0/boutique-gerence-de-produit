@@ -20,6 +20,8 @@ export interface Product {
   packSize?: number; // Nombre d'unités par carton (>= 2)
   packPrice?: number; // Prix du carton en GNF
   alertThresholdPacks?: number; // Seuil d'alerte cartons fermés facultatif
+  stockUnits?: number; // Compteur direct unités seules
+  stockPacks?: number; // Compteur direct cartons fermés
   createdAt: string;
   updatedAt: string;
 }

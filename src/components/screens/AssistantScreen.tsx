@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { ProductWithStock, CustomerWithBalance, Sale, CreditPayment } from '../../types';
 import { formatGNF, triggerHaptic } from '../../utils/formatters';
+import { generateUUID } from '../../utils/crypto';
 
 interface AssistantScreenProps {
   products: ProductWithStock[];
@@ -271,21 +272,24 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
     };
   };
 
+  const isSendingRef = useRef(false);
+
   const handleSendMessage = async (queryText?: string) => {
     const text = (queryText || inputText).trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || isSendingRef.current) return;
 
     if (!navigator.onLine) {
-      setErrorMessage("Connexion internet nécessaire pour l'assistant");
+      setErrorMessage("Vous n'êtes pas connecté à internet. L'assistant nécessite une connexion réseau.");
       return;
     }
 
+    isSendingRef.current = true;
     setErrorMessage(null);
     setInputText('');
     triggerHaptic(40);
 
     const userMessage: Message = {
-      id: `msg-${Date.now()}`,
+      id: `msg-${generateUUID()}`,
       sender: 'user',
       text,
       timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
@@ -293,6 +297,11 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
 
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, 25000);
 
     try {
       const contexte = buildContext();
@@ -304,7 +313,10 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
           question: text,
           contexte,
         }),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -317,7 +329,7 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
       const assistantText = data.reponse || "Désolé, aucune réponse n'a été fournie.";
 
       const assistantMessage: Message = {
-        id: `msg-resp-${Date.now()}`,
+        id: `msg-resp-${generateUUID()}`,
         sender: 'assistant',
         text: assistantText,
         timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
@@ -325,11 +337,19 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
 
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (err: unknown) {
-      const errMsg =
-        err instanceof Error ? err.message : "Erreur de communication avec l'assistant.";
-      setErrorMessage(errMsg);
+      clearTimeout(timeoutId);
+      if (err instanceof Error && err.name === 'AbortError') {
+        setErrorMessage("Le serveur n'a pas répondu à temps (délai dépassé de 25 secondes). Veuillez réessayer.");
+      } else if (!navigator.onLine) {
+        setErrorMessage("Connexion internet perdue. Veuillez vérifier votre connexion.");
+      } else {
+        const errMsg =
+          err instanceof Error ? err.message : "Erreur de communication avec l'assistant.";
+        setErrorMessage(errMsg);
+      }
     } finally {
       setIsLoading(false);
+      isSendingRef.current = false;
     }
   };
 

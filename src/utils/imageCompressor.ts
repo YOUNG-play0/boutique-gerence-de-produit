@@ -10,12 +10,24 @@ export async function compressProductImage(file: File): Promise<string> {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Erreur de lecture du fichier image.'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('Impossible de charger l’image.'));
-      img.onload = () => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+
+    const cleanup = () => {
+      try {
+        URL.revokeObjectURL(objectUrl);
+      } catch {
+        // ignore
+      }
+    };
+
+    img.onerror = () => {
+      cleanup();
+      reject(new Error('Impossible de charger l’image.'));
+    };
+
+    img.onload = () => {
+      try {
         const MAX_SIZE = 480;
         let width = img.width;
         let height = img.height;
@@ -38,6 +50,7 @@ export async function compressProductImage(file: File): Promise<string> {
 
         const ctx = canvas.getContext('2d');
         if (!ctx) {
+          cleanup();
           reject(new Error('Impossible d’initialiser le contexte canvas.'));
           return;
         }
@@ -49,18 +62,16 @@ export async function compressProductImage(file: File): Promise<string> {
         // Dessin de l'image redimensionnée
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-        // Encodage JPEG qualité 0.7
-        try {
-          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
-          resolve(compressedDataUrl);
-        } catch (encErr) {
-          reject(encErr);
-        }
-      };
-
-      img.src = reader.result as string;
+        // Encodage JPEG qualité 0.7 (480px max)
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+        cleanup();
+        resolve(compressedDataUrl);
+      } catch (encErr) {
+        cleanup();
+        reject(encErr);
+      }
     };
 
-    reader.readAsDataURL(file);
+    img.src = objectUrl;
   });
 }
