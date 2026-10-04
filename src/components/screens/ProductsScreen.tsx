@@ -13,10 +13,12 @@ import {
   Box,
   Package,
   X,
+  Printer,
 } from 'lucide-react';
 import { ProductWithStock, StockMovement } from '../../types';
 import { formatGNF, formatDateFrench, playSuccessChime, triggerHaptic } from '../../utils/formatters';
 import { deleteProduct, getAllStockMovements, openPack } from '../../services/db';
+import { PrintQRCodesModal } from '../products/PrintQRCodesModal';
 
 interface ProductsScreenProps {
   products: ProductWithStock[];
@@ -44,6 +46,7 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
   const [showHistoryModal, setShowHistoryModal] = useState<ProductWithStock | null>(null);
   const [productMovements, setProductMovements] = useState<StockMovement[]>([]);
   const [isOpeningPack, setIsOpeningPack] = useState<string | null>(null);
+  const [isPrintQROpen, setIsPrintQROpen] = useState(false);
 
   // Compteurs mis à jour en direct dès que products change
   const totalCount = products.length;
@@ -138,13 +141,29 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={onOpenCreateModal}
-          className="flex items-center gap-2 px-4 py-3 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-2xl shadow-md shadow-amber-600/30 transition flex-shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Nouveau Produit</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic(20);
+              setIsPrintQROpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3 sm:px-4 py-3 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-bold text-xs sm:text-sm rounded-2xl shadow-xs transition active:scale-95 flex-shrink-0"
+            title="Imprimer les codes QR de vos produits sur feuille A4"
+          >
+            <Printer className="w-4 h-4 text-amber-600" />
+            <span className="hidden sm:inline">Imprimer les QR</span>
+            <span className="sm:hidden">Imprimer QR</span>
+          </button>
+
+          <button
+            onClick={onOpenCreateModal}
+            className="flex items-center gap-2 px-3 sm:px-4 py-3 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-2xl shadow-md shadow-amber-600/30 transition flex-shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Nouveau Produit</span>
+          </button>
+        </div>
       </div>
 
       {/* 4 Onglets : Tous, Unités, Cartons, Stock bas */}
@@ -557,6 +576,13 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal d'impression groupée des codes QR sur feuille A4 */}
+      <PrintQRCodesModal
+        isOpen={isPrintQROpen}
+        products={products}
+        onClose={() => setIsPrintQROpen(false)}
+      />
     </div>
   );
 };

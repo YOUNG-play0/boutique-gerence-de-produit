@@ -27,6 +27,7 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({ isOpen, product, onClo
         {
           width: 260,
           margin: 2,
+          errorCorrectionLevel: 'M',
           color: {
             dark: '#1e293b',
             light: '#ffffff',

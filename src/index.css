@@ -27,11 +27,32 @@ button, a {
 
 /* Print Stylesheet for receipt & QR code stickers */
 @media print {
-  header, nav, button:not(.printable), .no-print {
-    display: none !important;
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
   }
+
   body {
     background: white !important;
     color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  header, nav, aside, button:not(.printable), .no-print {
+    display: none !important;
+  }
+
+  #qr-print-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+  }
+
+  article, .page-break-avoid, .break-inside-avoid {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 }
