@@ -5,16 +5,34 @@ const { Pool } = pg;
 
 let pool: pg.Pool | null = null;
 
+function isValidPostgresUrl(url: string | undefined): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('postgres://') && !trimmed.startsWith('postgresql://')) {
+    return false;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    return Boolean(parsed.hostname && parsed.hostname.length > 1);
+  } catch {
+    return false;
+  }
+}
+
 function getPool(): pg.Pool | null {
-  const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) return null;
+  const dbUrl = process.env.DATABASE_URL?.trim();
+  if (!isValidPostgresUrl(dbUrl)) return null;
   if (!pool) {
-    const isLocal = dbUrl.includes('localhost') || dbUrl.includes('127.0.0.1');
+    const isLocal = dbUrl!.includes('localhost') || dbUrl!.includes('127.0.0.1');
     pool = new Pool({
       connectionString: dbUrl,
       ssl: isLocal ? false : { rejectUnauthorized: false },
-      max: 10,
+      max: 5,
+      connectionTimeoutMillis: 3000,
       idleTimeoutMillis: 30000,
+    });
+    pool.on('error', (err) => {
+      console.warn('PostgreSQL Pool idle error:', err?.message || String(err));
     });
   }
   return pool;
@@ -45,7 +63,10 @@ async function ensureTableExists(p: pg.Pool): Promise<void> {
           PRIMARY KEY (install_id, day)
         );
       `);
-    })();
+    })().catch((err) => {
+      tableInitPromise = null;
+      throw err;
+    });
   }
   return tableInitPromise;
 }
@@ -234,13 +255,14 @@ export default async function handler(req: any, res: any) {
       ];
 
       await dbPool.query(query, values);
-    } catch (dbErr) {
-      console.error('Erreur écriture télémétrie dans PostgreSQL:', dbErr);
+    } catch (dbErr: any) {
+      console.warn('Persistance PostgreSQL non disponible :', dbErr?.message || String(dbErr));
+      tableInitPromise = null;
       // Même en cas d'erreur de base, on renvoie une réponse sans bloquer le client
     }
   } else {
-    // DATABASE_URL non configurée : log en mode dev
-    console.warn('DATABASE_URL non configurée : télémétrie reçue sans persistance SQL.');
+    // DATABASE_URL non configurée ou format invalide
+    console.warn('DATABASE_URL absente ou invalide : télémétrie traitée sans persistance SQL.');
   }
 
   // 4. Renvoie 204 No Content. Ne stocke JAMAIS l'adresse IP.

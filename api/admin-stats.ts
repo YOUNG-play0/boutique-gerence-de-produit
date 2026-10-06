@@ -7,16 +7,34 @@ const { Pool } = pg;
 
 let pool: pg.Pool | null = null;
 
+function isValidPostgresUrl(url: string | undefined): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('postgres://') && !trimmed.startsWith('postgresql://')) {
+    return false;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    return Boolean(parsed.hostname && parsed.hostname.length > 1);
+  } catch {
+    return false;
+  }
+}
+
 function getPool(): pg.Pool | null {
-  const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) return null;
+  const dbUrl = process.env.DATABASE_URL?.trim();
+  if (!isValidPostgresUrl(dbUrl)) return null;
   if (!pool) {
-    const isLocal = dbUrl.includes('localhost') || dbUrl.includes('127.0.0.1');
+    const isLocal = dbUrl!.includes('localhost') || dbUrl!.includes('127.0.0.1');
     pool = new Pool({
       connectionString: dbUrl,
       ssl: isLocal ? false : { rejectUnauthorized: false },
       max: 5,
+      connectionTimeoutMillis: 3000,
       idleTimeoutMillis: 30000,
+    });
+    pool.on('error', (err) => {
+      console.warn('PostgreSQL Admin Pool idle error:', err?.message || String(err));
     });
   }
   return pool;
@@ -388,9 +406,9 @@ export default async function handler(req: any, res: any) {
 
     return res.status(200).json(responseData);
   } catch (dbErr: any) {
-    console.error('Erreur lecture statistiques admin dans PostgreSQL:', dbErr);
+    console.warn('Lecture statistiques admin dans PostgreSQL non disponible :', dbErr?.message || String(dbErr));
     return res.status(503).json({
-      error: `Erreur lors de la lecture de la base de données : ${dbErr.message || 'Base inaccessible'}`,
+      error: `Erreur lors de la lecture de la base de données : ${dbErr?.message || 'Base inaccessible'}`,
     });
   }
 }
