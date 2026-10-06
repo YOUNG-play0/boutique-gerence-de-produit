@@ -13,6 +13,8 @@ import {
   Database,
   RefreshCw,
   ShieldCheck,
+  BookOpen,
+  Share2,
 } from 'lucide-react';
 import { ShopSettings } from '../../types';
 import {
@@ -21,6 +23,11 @@ import {
   generateBackupData,
   restoreBackupData,
   verifyStockIntegrity,
+  exportProductCatalogue,
+  validateProductCatalogue,
+  prepareCatalogueImportPreview,
+  executeCatalogueImport,
+  ProductCatalogueExportItem,
 } from '../../services/db';
 import {
   clearTelemetryQueue,
@@ -83,6 +90,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [integrityMessage, setIntegrityMessage] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // États pour l'Export & l'Import du Catalogue (Point 1, 2 & 3)
+  const [isExportingCatalogue, setIsExportingCatalogue] = useState(false);
+  const [isImportingCatalogue, setIsImportingCatalogue] = useState(false);
+  const [catalogueError, setCatalogueError] = useState<string | null>(null);
+  const [catalogueSuccess, setCatalogueSuccess] = useState<string | null>(null);
+  const [importPreview, setImportPreview] = useState<{
+    toAdd: ProductCatalogueExportItem[];
+    alreadyExistCount: number;
+    totalCount: number;
+  } | null>(null);
+  const [isExecutingImport, setIsExecutingImport] = useState(false);
+  const catalogueFileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) return null;
 
@@ -197,6 +217,124 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setPinError(err instanceof Error ? err.message : 'Erreur lors du changement de PIN.');
     } finally {
       setIsSubmittingPin(false);
+    }
+  };
+
+  /**
+   * Export du catalogue (Point 2) : partage natif (WhatsApp, Bluetooth) ou téléchargement de secours
+   */
+  const handleExportCatalogue = async () => {
+    try {
+      setIsExportingCatalogue(true);
+      setCatalogueError(null);
+      setCatalogueSuccess(null);
+
+      const { jsonString, fileName, count } = await exportProductCatalogue();
+      if (count === 0) {
+        setCatalogueError("Votre catalogue est vide. Ajoutez d'abord des produits avant d'exporter.");
+        return;
+      }
+
+      const file = new File([jsonString], fileName, { type: 'application/json' });
+
+      let shared = false;
+      // Essai de partage avec menu natif du téléphone (pour WhatsApp, Bluetooth, etc. - Point 2)
+      if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: 'Catalogue de la boutique',
+            text: `Catalogue de produits (${count} articles)`,
+          });
+          shared = true;
+          triggerHaptic(50);
+          setCatalogueSuccess(`Catalogue partagé avec succès (${count} produits) !`);
+        } catch (shareErr) {
+          if (shareErr instanceof Error && shareErr.name === 'AbortError') {
+            // L'utilisateur a simplement fermé la boîte de dialogue de partage
+            return;
+          }
+          console.warn('Partage fichier non disponible ou refusé, repli sur téléchargement', shareErr);
+        }
+      }
+
+      // Téléchargement classique en secours (Point 2)
+      if (!shared) {
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        URL.revokeObjectURL(url);
+        triggerHaptic(50);
+        setCatalogueSuccess(`Catalogue téléchargé avec succès (${count} produits) : ${fileName}`);
+      }
+
+      setTimeout(() => setCatalogueSuccess(null), 5000);
+    } catch (err: unknown) {
+      setCatalogueError(err instanceof Error ? err.message : "Erreur lors de l'export du catalogue.");
+    } finally {
+      setIsExportingCatalogue(false);
+    }
+  };
+
+  /**
+   * Sélection et validation d'un catalogue JSON avant écriture (Point 3)
+   */
+  const handleCatalogueFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsImportingCatalogue(true);
+      setCatalogueError(null);
+      setCatalogueSuccess(null);
+
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error('Le fichier sélectionné n’est pas un fichier JSON valide.');
+      }
+
+      // 1. Validation complète AVANT toute écriture (Point 3)
+      const validated = validateProductCatalogue(parsed);
+
+      // 2. Aperçu : "X produits seront ajoutés, Y existent déjà" (Point 3)
+      const preview = await prepareCatalogueImportPreview(validated);
+      setImportPreview(preview);
+    } catch (err: unknown) {
+      setCatalogueError(err instanceof Error ? err.message : "Erreur lors de la lecture du catalogue.");
+    } finally {
+      setIsImportingCatalogue(false);
+      e.target.value = '';
+    }
+  };
+
+  /**
+   * Confirmation et exécution atomique de l'import (Point 3)
+   */
+  const handleConfirmCatalogueImport = async () => {
+    if (!importPreview) return;
+    try {
+      setIsExecutingImport(true);
+      setCatalogueError(null);
+      const { addedCount } = await executeCatalogueImport(importPreview.toAdd);
+      triggerHaptic(80);
+      setCatalogueSuccess(
+        addedCount > 0
+          ? `${addedCount} produit(s) importé(s) avec succès dans votre catalogue !`
+          : `Aucun nouveau produit n'a été ajouté (${importPreview.alreadyExistCount} existaient déjà).`
+      );
+      setImportPreview(null);
+      onRefreshAllData?.();
+      setTimeout(() => setCatalogueSuccess(null), 5000);
+    } catch (err: unknown) {
+      setCatalogueError(err instanceof Error ? err.message : "Erreur lors de l'importation.");
+    } finally {
+      setIsExecutingImport(false);
     }
   };
 
@@ -492,6 +630,119 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             Modifier le code PIN
           </button>
         </form>
+
+        {/* Section : Catalogue (Export / Import - Point 1, 2, 3 & 4) */}
+        <div className="pt-4 border-t border-slate-200 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-black uppercase text-slate-700 tracking-wider">
+            <BookOpen className="w-4 h-4 text-amber-600" />
+            <span>Catalogue</span>
+          </div>
+
+          <p className="text-[11px] text-slate-500 leading-normal">
+            Exportez ou importez uniquement vos produits avec leurs photos et leurs stocks actuels (sans ventes, clients, dettes ni code PIN). Idéal pour partager votre catalogue par WhatsApp ou Bluetooth.
+          </p>
+
+          {catalogueError && (
+            <div className="p-2.5 bg-rose-50 text-rose-700 rounded-xl text-xs font-semibold border border-rose-200 flex items-center gap-1.5">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-500" />
+              <span>{catalogueError}</span>
+            </div>
+          )}
+
+          {catalogueSuccess && (
+            <div className="p-2.5 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-semibold border border-emerald-200 flex items-center gap-1.5">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+              <span>{catalogueSuccess}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            {/* Exporter le catalogue */}
+            <button
+              type="button"
+              disabled={isExportingCatalogue}
+              onClick={handleExportCatalogue}
+              className="py-3 px-3 bg-amber-600 hover:bg-amber-700 active:scale-95 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-2"
+            >
+              {isExportingCatalogue ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Share2 className="w-4 h-4" />
+              )}
+              <span>Exporter le catalogue</span>
+            </button>
+
+            {/* Importer un catalogue */}
+            <button
+              type="button"
+              disabled={isImportingCatalogue}
+              onClick={() => catalogueFileInputRef.current?.click()}
+              className="py-3 px-3 bg-white hover:bg-slate-50 active:scale-95 border border-slate-300 text-slate-800 font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-2"
+            >
+              {isImportingCatalogue ? (
+                <RefreshCw className="w-4 h-4 animate-spin text-amber-600" />
+              ) : (
+                <Upload className="w-4 h-4 text-amber-600" />
+              )}
+              <span>Importer un catalogue</span>
+            </button>
+
+            <input
+              ref={catalogueFileInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={handleCatalogueFileSelect}
+            />
+          </div>
+
+          {/* Boîte d'aperçu de validation avant toute écriture (Point 3) */}
+          {importPreview && (
+            <div className="p-4 bg-amber-50/90 border border-amber-300 rounded-2xl space-y-3 animate-in fade-in zoom-in-95">
+              <div className="flex items-start gap-2.5">
+                <BookOpen className="w-5 h-5 text-amber-700 flex-shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="text-xs font-bold text-slate-900">
+                    Aperçu de l'importation du catalogue
+                  </div>
+                  <div className="text-xs text-amber-950 font-black">
+                    {importPreview.toAdd.length} produit{importPreview.toAdd.length > 1 ? 's' : ''} seront ajouté{importPreview.toAdd.length > 1 ? 's' : ''}, {importPreview.alreadyExistCount} existent déjà.
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-snug">
+                    {importPreview.alreadyExistCount > 0
+                      ? 'Les produits déjà existants seront ignorés et conservés intacts. Aucune donnée ne sera effacée.'
+                      : 'Tous les produits du fichier seront ajoutés avec leur stock initial.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isExecutingImport || importPreview.toAdd.length === 0}
+                  onClick={handleConfirmCatalogueImport}
+                  className="flex-1 py-2.5 px-3 bg-amber-600 hover:bg-amber-700 active:scale-95 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1.5"
+                >
+                  {isExecutingImport ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Check className="w-4 h-4" />
+                  )}
+                  <span>Confirmer l'importation</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isExecutingImport}
+                  onClick={() => setImportPreview(null)}
+                  className="py-2.5 px-3 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-xs rounded-xl transition"
+                >
+                  Annuler
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Section 3 : Sauvegarde & Restauration (Export / Import - Point B.10) */}
         <div className="pt-4 border-t border-slate-200 space-y-3">

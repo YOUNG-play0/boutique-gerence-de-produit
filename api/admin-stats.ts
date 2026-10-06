@@ -161,6 +161,12 @@ export default async function handler(req: any, res: any) {
       );
     `);
 
+    try {
+      await dbPool.query(`ALTER TABLE telemetry_summaries ENABLE ROW LEVEL SECURITY;`);
+    } catch (rlsErr: any) {
+      console.error('Erreur activation RLS sur telemetry_summaries :', rlsErr?.message || String(rlsErr));
+    }
+
     // Récupérer toutes les données de télémétrie pour les calculs analytiques
     const allRecordsResult = await dbPool.query(`
       SELECT

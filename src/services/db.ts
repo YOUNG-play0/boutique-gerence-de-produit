@@ -1387,42 +1387,58 @@ export async function recordCreditPayment(
   }
 
   const db = await getDB();
+  const tx = db.transaction(['customer_debts', 'sales', 'credit_payments'], 'readwrite');
 
-  // Vérification de la dette actuelle du client (Point 4)
-  const [debts, sales, payments] = await Promise.all([
-    db.getAllFromIndex('customer_debts', 'by-customer', customerId),
-    db.getAllFromIndex('sales', 'by-customer', customerId),
-    db.getAllFromIndex('credit_payments', 'by-customer', customerId),
-  ]);
+  try {
+    const debtStore = tx.objectStore('customer_debts');
+    const saleStore = tx.objectStore('sales');
+    const paymentStore = tx.objectStore('credit_payments');
 
-  let totalDebts = 0;
-  for (const d of debts) {
-    if (!d.isCancelled) totalDebts += Math.round(d.amount);
+    // Lecture de la dette actuelle du client au sein de la transaction (Point 4)
+    const [debts, sales, payments] = await Promise.all([
+      debtStore.index('by-customer').getAll(customerId),
+      saleStore.index('by-customer').getAll(customerId),
+      paymentStore.index('by-customer').getAll(customerId),
+    ]);
+
+    let totalDebts = 0;
+    for (const d of debts) {
+      if (!d.isCancelled) totalDebts += Math.round(d.amount);
+    }
+    for (const s of sales) {
+      if (!s.isCancelled && s.paymentType === 'credit') totalDebts += Math.round(s.totalAmount);
+    }
+    let totalPayments = 0;
+    for (const p of payments) {
+      totalPayments += Math.round(p.amount);
+    }
+
+    const currentDebt = Math.max(0, totalDebts - totalPayments);
+    if (roundedAmount > currentDebt) {
+      throw new Error(`Le client ne doit que ${formatGNF(currentDebt)}`);
+    }
+
+    const payment: CreditPayment = {
+      id: `pay-${generateUUID()}`,
+      customerId,
+      customerName,
+      amount: roundedAmount,
+      date: new Date().toISOString(),
+      note: note?.trim() || undefined,
+    };
+
+    await paymentStore.add(payment);
+    await tx.done;
+
+    return payment;
+  } catch (err) {
+    try {
+      tx.abort();
+    } catch {
+      // ignore
+    }
+    throw err;
   }
-  for (const s of sales) {
-    if (!s.isCancelled && s.paymentType === 'credit') totalDebts += Math.round(s.totalAmount);
-  }
-  let totalPayments = 0;
-  for (const p of payments) {
-    totalPayments += Math.round(p.amount);
-  }
-
-  const currentDebt = Math.max(0, totalDebts - totalPayments);
-  if (roundedAmount > currentDebt) {
-    throw new Error(`Le client ne doit que ${formatGNF(currentDebt)}`);
-  }
-
-  const payment: CreditPayment = {
-    id: `pay-${generateUUID()}`,
-    customerId,
-    customerName,
-    amount: roundedAmount,
-    date: new Date().toISOString(),
-    note: note?.trim() || undefined,
-  };
-
-  await db.add('credit_payments', payment);
-  return payment;
 }
 
 export async function getCreditPaymentsForCustomer(customerId: string): Promise<CreditPayment[]> {
@@ -1765,3 +1781,338 @@ export async function restoreBackupData(backup: unknown): Promise<void> {
   // Réajuster l'intégrité des compteurs de stock immédiatement après la restauration
   await verifyStockIntegrity();
 }
+
+// ----------------- EXPORT & IMPORT DU CATALOGUE DE PRODUITS -----------------
+
+export interface ProductCatalogueExportItem {
+  id: string;
+  name: string;
+  category?: string;
+  price: number; // Prix à l'unité en GNF
+  packLabel?: string;
+  packSize?: number;
+  packPrice?: number;
+  alertThreshold: number;
+  alertThresholdPacks?: number;
+  photo?: string;
+  packPhoto?: string;
+  imageUrl?: string;
+  barcode?: string;
+  stockUnits: number;
+  stockPacks: number;
+}
+
+export interface ProductCatalogueFile {
+  version: 1;
+  type: 'catalogue';
+  exportedAt: string;
+  products: ProductCatalogueExportItem[];
+}
+
+/**
+ * Exporte UNIQUEMENT le catalogue des produits et leurs stocks actuels (Point 2)
+ * Aucune vente, client, dette, paiement, conversation, PIN ni réglage boutique.
+ */
+export async function exportProductCatalogue(): Promise<{
+  catalogue: ProductCatalogueFile;
+  jsonString: string;
+  fileName: string;
+  count: number;
+}> {
+  const db = await getDB();
+  const products = await db.getAll('products');
+
+  const exportItems: ProductCatalogueExportItem[] = products.map((p) => ({
+    id: p.id,
+    name: p.name,
+    category: p.category,
+    price: Math.round(p.price),
+    packLabel: p.packLabel,
+    packSize: p.packSize,
+    packPrice: p.packPrice ? Math.round(p.packPrice) : undefined,
+    alertThreshold: p.alertThreshold ?? 5,
+    alertThresholdPacks: p.alertThresholdPacks,
+    photo: p.photo,
+    packPhoto: p.packPhoto,
+    imageUrl: p.imageUrl,
+    barcode: p.barcode,
+    stockUnits: Math.max(0, Math.round(p.stockUnits ?? 0)),
+    stockPacks: Math.max(0, Math.round(p.stockPacks ?? 0)),
+  }));
+
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const fileName = `catalogue-${dateStr}.json`;
+
+  const catalogue: ProductCatalogueFile = {
+    version: 1,
+    type: 'catalogue',
+    exportedAt: now.toISOString(),
+    products: exportItems,
+  };
+
+  const jsonString = JSON.stringify(catalogue, null, 2);
+  return { catalogue, jsonString, fileName, count: exportItems.length };
+}
+
+/**
+ * Validation rigoureuse d'un fichier catalogue AVANT toute écriture (Point 3)
+ */
+export function validateProductCatalogue(raw: unknown): ProductCatalogueExportItem[] {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Le fichier sélectionné ne contient pas un objet JSON valide.');
+  }
+
+  let items: unknown[];
+  if (Array.isArray(raw)) {
+    items = raw;
+  } else {
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.products)) {
+      items = obj.products;
+    } else if (Array.isArray(obj.catalogue)) {
+      items = obj.catalogue;
+    } else {
+      throw new Error("Le fichier ne contient aucune liste de produits ('products').");
+    }
+  }
+
+  if (items.length === 0) {
+    throw new Error('Le catalogue sélectionné ne contient aucun produit.');
+  }
+
+  const validated: ProductCatalogueExportItem[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const indexStr = `Produit #${i + 1}`;
+
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`${indexStr} : format d'objet invalide.`);
+    }
+
+    const rec = item as Record<string, unknown>;
+
+    // Identifiant obligatoire
+    const id = typeof rec.id === 'string' && rec.id.trim() ? rec.id.trim() : null;
+    if (!id) {
+      throw new Error(`${indexStr} : l'identifiant 'id' est manquant ou invalide.`);
+    }
+
+    // Nom obligatoire
+    const rawName = typeof rec.name === 'string' ? rec.name : typeof rec.nom === 'string' ? rec.nom : '';
+    const name = rawName.trim();
+    if (!name) {
+      throw new Error(`${indexStr} (id: ${id}) : le nom du produit est obligatoire.`);
+    }
+
+    // Prix unitaire obligatoire et strictement positif
+    const rawPrice = rec.price !== undefined ? rec.price : rec.prix;
+    const price = Number(rawPrice);
+    if (isNaN(price) || price <= 0) {
+      throw new Error(`${indexStr} (« ${name} ») : le prix unitaire doit être un nombre positif supérieur à zéro.`);
+    }
+
+    // Format carton éventuel
+    let packSize: number | undefined = undefined;
+    if (rec.packSize !== undefined && rec.packSize !== null) {
+      const ps = Number(rec.packSize);
+      if (isNaN(ps) || ps < 2) {
+        throw new Error(`${indexStr} (« ${name} ») : le nombre d'unités par carton doit être un nombre supérieur ou égal à 2.`);
+      }
+      packSize = Math.round(ps);
+    }
+
+    let packPrice: number | undefined = undefined;
+    if (rec.packPrice !== undefined && rec.packPrice !== null) {
+      const pp = Number(rec.packPrice);
+      if (isNaN(pp) || pp <= 0) {
+        throw new Error(`${indexStr} (« ${name} ») : le prix du carton doit être un nombre positif.`);
+      }
+      packPrice = Math.round(pp);
+    }
+
+    // Seuils d'alerte
+    let alertThreshold = 5;
+    if (rec.alertThreshold !== undefined && rec.alertThreshold !== null) {
+      const at = Number(rec.alertThreshold);
+      if (isNaN(at) || at < 0) {
+        throw new Error(`${indexStr} (« ${name} ») : le seuil d'alerte en unités doit être un nombre positif ou nul.`);
+      }
+      alertThreshold = Math.round(at);
+    }
+
+    let alertThresholdPacks: number | undefined = undefined;
+    if (rec.alertThresholdPacks !== undefined && rec.alertThresholdPacks !== null) {
+      const atp = Number(rec.alertThresholdPacks);
+      if (isNaN(atp) || atp < 0) {
+        throw new Error(`${indexStr} (« ${name} ») : le seuil d'alerte en cartons doit être un nombre positif ou nul.`);
+      }
+      alertThresholdPacks = Math.round(atp);
+    }
+
+    // Quantités de stock initiales
+    let stockUnits = 0;
+    if (rec.stockUnits !== undefined && rec.stockUnits !== null) {
+      const su = Number(rec.stockUnits);
+      if (isNaN(su) || su < 0) {
+        throw new Error(`${indexStr} (« ${name} ») : la quantité de stock d'unités doit être un nombre positif ou nul.`);
+      }
+      stockUnits = Math.round(su);
+    }
+
+    let stockPacks = 0;
+    if (rec.stockPacks !== undefined && rec.stockPacks !== null) {
+      const sp = Number(rec.stockPacks);
+      if (isNaN(sp) || sp < 0) {
+        throw new Error(`${indexStr} (« ${name} ») : la quantité de stock de cartons doit être un nombre positif ou nul.`);
+      }
+      stockPacks = Math.round(sp);
+    }
+
+    // Contrôle de plausibilité de la taille des photos (<= 3 Mo)
+    let photo: string | undefined = undefined;
+    if (typeof rec.photo === 'string' && rec.photo.trim()) {
+      if (rec.photo.length > 3_000_000) {
+        throw new Error(`${indexStr} (« ${name} ») : la photo du produit est trop volumineuse (maximum 3 Mo autorisés).`);
+      }
+      photo = rec.photo;
+    }
+
+    let packPhoto: string | undefined = undefined;
+    if (typeof rec.packPhoto === 'string' && rec.packPhoto.trim()) {
+      if (rec.packPhoto.length > 3_000_000) {
+        throw new Error(`${indexStr} (« ${name} ») : la photo du carton est trop volumineuse (maximum 3 Mo autorisés).`);
+      }
+      packPhoto = rec.packPhoto;
+    }
+
+    validated.push({
+      id,
+      name,
+      category: typeof rec.category === 'string' ? rec.category.trim() : undefined,
+      price: Math.round(price),
+      packLabel: typeof rec.packLabel === 'string' ? rec.packLabel.trim() : undefined,
+      packSize,
+      packPrice,
+      alertThreshold,
+      alertThresholdPacks,
+      photo,
+      packPhoto,
+      imageUrl: typeof rec.imageUrl === 'string' ? rec.imageUrl.trim() : undefined,
+      barcode: typeof rec.barcode === 'string' ? rec.barcode.trim() : undefined,
+      stockUnits,
+      stockPacks,
+    });
+  }
+
+  return validated;
+}
+
+/**
+ * Prépare l'aperçu de l'import : calcule le nombre de produits à ajouter et ceux déjà existants
+ */
+export async function prepareCatalogueImportPreview(
+  validatedItems: ProductCatalogueExportItem[]
+): Promise<{
+  toAdd: ProductCatalogueExportItem[];
+  alreadyExistCount: number;
+  totalCount: number;
+}> {
+  const db = await getDB();
+  const existingProducts = await db.getAll('products');
+  const existingIds = new Set(existingProducts.map((p) => p.id));
+
+  const toAdd = validatedItems.filter((p) => !existingIds.has(p.id));
+  const alreadyExistCount = validatedItems.length - toAdd.length;
+
+  return {
+    toAdd,
+    alreadyExistCount,
+    totalCount: validatedItems.length,
+  };
+}
+
+/**
+ * Exécute l'importation du catalogue dans une transaction atomique unique (Point 3)
+ * Les produits existants sont ignorés ; les nouveaux sont ajoutés avec le MÊME id.
+ * Le stock devient un mouvement de stock initial (type 'stock initial', motif 'Import du catalogue').
+ */
+export async function executeCatalogueImport(
+  toAdd: ProductCatalogueExportItem[]
+): Promise<{ addedCount: number }> {
+  if (toAdd.length === 0) {
+    return { addedCount: 0 };
+  }
+
+  const db = await getDB();
+  const tx = db.transaction(['products', 'stock_movements'], 'readwrite');
+  const productStore = tx.objectStore('products');
+  const movementStore = tx.objectStore('stock_movements');
+  const now = new Date().toISOString();
+
+  try {
+    for (const item of toAdd) {
+      const newProduct: Product = {
+        id: item.id, // MÊME id préservé (Point 3)
+        name: item.name,
+        category: item.category,
+        price: item.price,
+        packLabel: item.packLabel,
+        packSize: item.packSize,
+        packPrice: item.packPrice,
+        alertThreshold: item.alertThreshold,
+        alertThresholdPacks: item.alertThresholdPacks,
+        photo: item.photo,
+        packPhoto: item.packPhoto,
+        imageUrl: item.imageUrl,
+        barcode: item.barcode,
+        stockUnits: item.stockUnits,
+        stockPacks: item.stockPacks,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await productStore.add(newProduct);
+
+      // Mouvements de stock initial (type 'stock initial', motif 'Import du catalogue')
+      if (item.stockUnits > 0) {
+        const unitMov: StockMovement = {
+          id: `mov-${generateUUID()}`,
+          productId: item.id,
+          type: 'stock initial' as StockMovementType,
+          support: 'unit',
+          quantity: item.stockUnits,
+          reason: 'Import du catalogue',
+          date: now,
+        };
+        await movementStore.add(unitMov);
+      }
+
+      if (item.stockPacks > 0) {
+        const packMov: StockMovement = {
+          id: `mov-${generateUUID()}`,
+          productId: item.id,
+          type: 'stock initial' as StockMovementType,
+          support: 'pack',
+          quantity: item.stockPacks,
+          reason: 'Import du catalogue',
+          date: now,
+        };
+        await movementStore.add(packMov);
+      }
+    }
+
+    await tx.done;
+  } catch (err) {
+    try {
+      tx.abort();
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
+
+  return { addedCount: toAdd.length };
+}
+

@@ -32,7 +32,7 @@ function getPool(): pg.Pool | null {
       idleTimeoutMillis: 30000,
     });
     pool.on('error', (err) => {
-      console.warn('PostgreSQL Pool idle error:', err?.message || String(err));
+      console.error('PostgreSQL Pool idle error:', err?.message || String(err));
     });
   }
   return pool;
@@ -63,6 +63,12 @@ async function ensureTableExists(p: pg.Pool): Promise<void> {
           PRIMARY KEY (install_id, day)
         );
       `);
+
+      try {
+        await p.query(`ALTER TABLE telemetry_summaries ENABLE ROW LEVEL SECURITY;`);
+      } catch (rlsErr: any) {
+        console.error('Erreur activation RLS sur telemetry_summaries :', rlsErr?.message || String(rlsErr));
+      }
     })().catch((err) => {
       tableInitPromise = null;
       throw err;
@@ -256,13 +262,13 @@ export default async function handler(req: any, res: any) {
 
       await dbPool.query(query, values);
     } catch (dbErr: any) {
-      console.warn('Persistance PostgreSQL non disponible :', dbErr?.message || String(dbErr));
+      console.error('Erreur écriture télémétrie dans PostgreSQL :', dbErr?.message || String(dbErr));
       tableInitPromise = null;
       // Même en cas d'erreur de base, on renvoie une réponse sans bloquer le client
     }
   } else {
     // DATABASE_URL non configurée ou format invalide
-    console.warn('DATABASE_URL absente ou invalide : télémétrie traitée sans persistance SQL.');
+    console.error('DATABASE_URL absente ou invalide : télémétrie traitée sans persistance SQL.');
   }
 
   // 4. Renvoie 204 No Content. Ne stocke JAMAIS l'adresse IP.

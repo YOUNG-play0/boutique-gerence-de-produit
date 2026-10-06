@@ -1,4 +1,4 @@
-export type StockMovementType = 'initial' | 'reappro' | 'vente' | 'correction' | 'ouverture' | 'annulation';
+export type StockMovementType = 'initial' | 'stock initial' | 'reappro' | 'vente' | 'correction' | 'ouverture' | 'annulation';
 
 export type CorrectionReason = 'casse' | 'vol' | 'erreur' | 'perime' | 'don' | 'autre';
 
