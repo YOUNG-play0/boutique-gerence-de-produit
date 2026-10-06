@@ -12,6 +12,7 @@ import {
   Upload,
   Database,
   RefreshCw,
+  ShieldCheck,
 } from 'lucide-react';
 import { ShopSettings } from '../../types';
 import {
@@ -19,7 +20,13 @@ import {
   changeShopPin,
   generateBackupData,
   restoreBackupData,
+  verifyStockIntegrity,
 } from '../../services/db';
+import {
+  clearTelemetryQueue,
+  buildAndQueueDailySummary,
+  flushTelemetryQueue,
+} from '../../services/telemetry';
 import { triggerHaptic } from '../../utils/formatters';
 
 interface SettingsModalProps {
@@ -51,6 +58,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [shopOwner, setShopOwner] = useState(settings.shopOwner);
   const [phone, setPhone] = useState(settings.phone);
   const [address, setAddress] = useState(settings.address);
+  const [city, setCity] = useState(settings.city || '');
+  const [telemetryEnabled, setTelemetryEnabled] = useState(settings.telemetryEnabled !== false);
 
   // PIN change state
   const [oldPin, setOldPin] = useState('');
@@ -70,10 +79,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isSubmittingPin, setIsSubmittingPin] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isVerifyingStock, setIsVerifyingStock] = useState(false);
+  const [integrityMessage, setIntegrityMessage] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) return null;
+
+  const handleRunIntegrityCheck = async () => {
+    try {
+      setIsVerifyingStock(true);
+      setIntegrityMessage(null);
+      const res = await verifyStockIntegrity();
+      triggerHaptic(60);
+      onRefreshAllData?.();
+      if (res.fixedProducts > 0) {
+        setIntegrityMessage(`Diagnostic terminé : ${res.checkedProducts} produits analysés, ${res.fixedProducts} écart(s) de stock corrigé(s) avec succès.`);
+      } else {
+        setIntegrityMessage(`Diagnostic parfait : ${res.checkedProducts} produits vérifiés, aucun écart détecté. Les compteurs sont 100% cohérents.`);
+      }
+    } catch (err: unknown) {
+      setIntegrityMessage(err instanceof Error ? err.message : 'Erreur lors du diagnostic des stocks.');
+    } finally {
+      setIsVerifyingStock(false);
+    }
+  };
 
   const handleUpdateInfo = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,6 +122,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         shopOwner: shopOwner.trim(),
         phone: phone.trim(),
         address: address.trim(),
+        city: city.trim() || undefined,
+        telemetryEnabled,
       });
       triggerHaptic(50);
       setInfoSuccess('Informations enregistrées avec succès !');
@@ -101,6 +133,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setInfoError(err instanceof Error ? err.message : 'Erreur lors de la mise à jour.');
     } finally {
       setIsSubmittingInfo(false);
+    }
+  };
+
+  const handleToggleTelemetry = async () => {
+    const nextVal = !telemetryEnabled;
+    setTelemetryEnabled(nextVal);
+    triggerHaptic(40);
+    try {
+      const updated = await updateShopSettings({
+        shopName: settings.shopName,
+        shopOwner: settings.shopOwner,
+        phone: settings.phone,
+        address: settings.address,
+        city: settings.city,
+        telemetryEnabled: nextVal,
+      });
+      onSettingsUpdated(updated);
+      if (!nextVal) {
+        await clearTelemetryQueue();
+      } else {
+        await buildAndQueueDailySummary();
+        await flushTelemetryQueue();
+      }
+    } catch (err) {
+      console.warn('Erreur mise à jour télémétrie:', err);
     }
   };
 
@@ -290,6 +347,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           <div>
             <label className="text-xs font-bold text-slate-700 block mb-1">
+              Ville ou préfecture (facultatif)
+            </label>
+            <input
+              type="text"
+              placeholder="Ex: Conakry, Kankan, Labé, Kindia..."
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              className="w-full p-3 text-xs bg-slate-50 border border-slate-300 rounded-xl font-semibold focus:outline-none focus:border-amber-500 focus:bg-white"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-700 block mb-1">
               Marché ou adresse
             </label>
             <input
@@ -308,6 +378,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             Enregistrer les coordonnées
           </button>
         </form>
+
+        {/* Section : Statistiques anonymes d'utilisation (Point 4) */}
+        <div className="pt-4 border-t border-slate-200">
+          <div className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+            <div className="space-y-0.5 min-w-0 pr-2">
+              <label
+                htmlFor="telemetry-toggle"
+                className="text-xs font-bold text-slate-900 block cursor-pointer"
+              >
+                Statistiques anonymes d'utilisation
+              </label>
+              <p className="text-[11px] text-slate-500 leading-snug">
+                Aide à améliorer l'application. Aucune donnée de vos clients ni de vos ventes n'est envoyée.
+              </p>
+            </div>
+            <button
+              id="telemetry-toggle"
+              type="button"
+              role="switch"
+              aria-checked={telemetryEnabled}
+              onClick={handleToggleTelemetry}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                telemetryEnabled ? 'bg-amber-600' : 'bg-slate-300'
+              }`}
+            >
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                  telemetryEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
 
         {/* Section 2 : Changer le code PIN */}
         <form onSubmit={handleChangePin} className="pt-4 border-t border-slate-200 space-y-3">
@@ -513,6 +617,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 }
               }}
             />
+          </div>
+
+          {/* Diagnostic & Contrôle d'intégrité des Stocks */}
+          <div className="pt-4 border-t border-slate-200 space-y-2.5">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                Cohérence & Diagnostic des Stocks
+              </h4>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Vérifie mathématiquement que les compteurs de stock de chaque article correspondent fidèlement à tous les mouvements enregistrés (ventes, réapprovisionnements, corrections, annulations).
+            </p>
+
+            {integrityMessage && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-800 flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                <span>{integrityMessage}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              disabled={isVerifyingStock}
+              onClick={handleRunIntegrityCheck}
+              className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-2"
+            >
+              {isVerifyingStock ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <ShieldCheck className="w-4 h-4" />
+              )}
+              <span>Vérifier & recalculer les stocks</span>
+            </button>
           </div>
         </div>
       </div>

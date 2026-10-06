@@ -85,6 +85,7 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
     useState<CustomerWithBalance | null>(null);
   const [paymentAmount, setPaymentAmount] = useState<number | ''>('');
   const [paymentNote, setPaymentNote] = useState('');
+  const [paymentError, setPaymentError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const isProcessingRef = useRef(false);
 
@@ -155,19 +156,32 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
     setSelectedCustomerForPayment(customer);
     setPaymentAmount(customer.currentDebt);
     setPaymentNote('Règlement espèces');
+    setPaymentError(null);
   };
 
   const handleConfirmPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCustomerForPayment || !paymentAmount || paymentAmount <= 0 || isProcessing || isProcessingRef.current) return;
+    if (!selectedCustomerForPayment || isProcessing || isProcessingRef.current) return;
+
+    const amountNum = Number(paymentAmount);
+    if (!amountNum || amountNum <= 0) {
+      setPaymentError('Veuillez entrer un montant supérieur à zéro.');
+      return;
+    }
+
+    if (amountNum > selectedCustomerForPayment.currentDebt) {
+      setPaymentError(`Le client ne doit que ${formatGNF(selectedCustomerForPayment.currentDebt)}`);
+      return;
+    }
 
     try {
       isProcessingRef.current = true;
       setIsProcessing(true);
+      setPaymentError(null);
       await recordCreditPayment(
         selectedCustomerForPayment.id,
         selectedCustomerForPayment.name,
-        Number(paymentAmount),
+        amountNum,
         paymentNote.trim() || undefined
       );
 
@@ -176,7 +190,8 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
 
       setSelectedCustomerForPayment(null);
       onRefreshData();
-    } catch (err) {
+    } catch (err: unknown) {
+      setPaymentError(err instanceof Error ? err.message : 'Erreur lors du paiement');
       console.error(err);
     } finally {
       isProcessingRef.current = false;
@@ -305,6 +320,15 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
   const handleConfirmCancelDebt = async () => {
     if (!debtToCancel) return;
     try {
+      const currentDebt = historyCustomer?.currentDebt ?? 0;
+      if (debtToCancel.amount > currentDebt) {
+        const excess = debtToCancel.amount - currentDebt;
+        const proceed = window.confirm(
+          `Avertissement : Ce client a déjà payé ${formatGNF(excess)} de plus que ce qu'il doit.\n\nConfirmez-vous l'annulation ?`
+        );
+        if (!proceed) return;
+      }
+
       setCancellingDebtId(debtToCancel.id);
       setCancelError(null);
       await cancelCustomerDebt(debtToCancel.id);
@@ -745,6 +769,13 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
               </div>
             </div>
 
+            {paymentError && (
+              <div className="mb-3 p-3 bg-rose-50 text-rose-700 text-xs font-bold rounded-xl border border-rose-200 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                <span>{paymentError}</span>
+              </div>
+            )}
+
             <form onSubmit={handleConfirmPayment} className="space-y-4">
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">
@@ -1066,6 +1097,15 @@ export const CreditsScreen: React.FC<CreditsScreenProps> = ({
               <div className="mt-3 p-3 bg-rose-50 text-rose-700 text-xs font-semibold rounded-xl border border-rose-200 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
                 <span>{cancelError}</span>
+              </div>
+            )}
+
+            {historyCustomer && debtToCancel.amount > historyCustomer.currentDebt && (
+              <div className="mt-3 p-3 bg-amber-50 text-amber-900 text-xs font-bold rounded-xl border border-amber-300 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
+                <span>
+                  Ce client a déjà payé {formatGNF(debtToCancel.amount - historyCustomer.currentDebt)} de plus que ce qu'il doit.
+                </span>
               </div>
             )}
 

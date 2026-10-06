@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { ProductWithStock, UnitType } from '../../types';
 import { formatGNF, playBeep, playSuccessChime, triggerHaptic } from '../../utils/formatters';
+import { recordScanUse } from '../../services/telemetry';
 
 interface QRScannerModalProps {
   isOpen: boolean;
@@ -259,6 +260,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
     }
     lastScannedItemRef.current = { code: cleanText, timestamp: now };
     lastScanTimestampRef.current = now;
+    recordScanUse().catch(() => {});
 
     let matchedProduct: ProductWithStock | undefined;
 

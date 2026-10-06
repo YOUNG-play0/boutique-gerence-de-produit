@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { ShieldCheck, RotateCcw } from 'lucide-react';
+import { recordAppError } from '../../services/telemetry';
 
 interface Props {
   children: ReactNode;
@@ -21,6 +22,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ErrorBoundary a intercepté une erreur critique :', error, errorInfo);
+    recordAppError().catch(() => {});
   }
 
   private handleReload = () => {

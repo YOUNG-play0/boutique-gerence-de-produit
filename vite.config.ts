@@ -3,6 +3,46 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
+import telemetryHandler from './api/telemetry';
+import adminStatsHandler from './api/admin-stats';
+
+function handleServerless(handler: any) {
+  return (req: any, res: any) => {
+    let bodyStr = '';
+    req.on('data', (chunk: any) => {
+      bodyStr += chunk;
+    });
+    req.on('end', async () => {
+      try {
+        if (bodyStr.trim()) {
+          try {
+            req.body = JSON.parse(bodyStr);
+          } catch {
+            req.body = bodyStr;
+          }
+        }
+      } catch {}
+      res.status = (code: number) => {
+        res.statusCode = code;
+        return res;
+      };
+      res.json = (data: any) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(data));
+      };
+      try {
+        await handler(req, res);
+      } catch (err: any) {
+        console.error('API Middleware Error:', err);
+        if (!res.writableEnded) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err.message || 'Internal Server Error' }));
+        }
+      }
+    });
+  };
+}
 
 export default defineConfig(() => {
   return {
@@ -10,9 +50,18 @@ export default defineConfig(() => {
       react(),
       tailwindcss(),
       {
-        name: 'dev-api-assistant',
+        name: 'dev-api-routes',
         configureServer(server) {
           server.middlewares.use(async (req, res, next) => {
+            const url = req.url ? req.url.split('?')[0] : '';
+            if (url === '/api/telemetry' && req.method === 'POST') {
+              handleServerless(telemetryHandler)(req, res);
+              return;
+            }
+            if (url === '/api/admin-stats') {
+              handleServerless(adminStatsHandler)(req, res);
+              return;
+            }
             if (req.url === '/api/assistant' && req.method === 'POST') {
               let bodyStr = '';
               req.on('data', (chunk) => {
@@ -209,6 +258,7 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          navigateFallbackDenylist: [/^\/admin/, /^\/api/],
         },
         devOptions: {
           enabled: true,

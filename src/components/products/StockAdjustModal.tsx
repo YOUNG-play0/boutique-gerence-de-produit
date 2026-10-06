@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { X, Plus, AlertTriangle, CheckCircle2, Layers, Package } from 'lucide-react';
 import { ProductWithStock, CorrectionReason, StockSupport } from '../../types';
 import { addStockReappro, correctStock } from '../../services/db';
@@ -29,13 +29,14 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
   const [reason, setReason] = useState<CorrectionReason>('casse');
   const [note, setNote] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen || !product) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting) return;
+    if (isSubmitting || isSubmittingRef.current) return;
 
     if (!quantity || quantity <= 0 || !Number.isInteger(quantity)) {
       setError('Veuillez entrer une quantité entière positive.');
@@ -57,6 +58,7 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
     }
 
     try {
+      isSubmittingRef.current = true;
       setIsSubmitting(true);
       setError(null);
 
@@ -84,6 +86,7 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Erreur lors de la mise à jour');
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -310,7 +313,7 @@ export const StockAdjustModal: React.FC<StockAdjustModalProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className={`w-full py-4 rounded-2xl text-white font-black text-base shadow-lg transition active:scale-98 flex items-center justify-center gap-2 ${
+              className={`w-full py-4 rounded-2xl text-white font-black text-base shadow-lg transition active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none flex items-center justify-center gap-2 ${
                 mode === 'reappro'
                   ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/30'
                   : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/30'

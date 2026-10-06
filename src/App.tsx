@@ -31,7 +31,6 @@ import { SaleScreen } from './components/screens/SaleScreen';
 import { ProductsScreen } from './components/screens/ProductsScreen';
 import { CreditsScreen } from './components/screens/CreditsScreen';
 import { DailyReportScreen } from './components/screens/DailyReportScreen';
-import { AssistantScreen } from './components/screens/AssistantScreen';
 import { CartDrawer } from './components/cart/CartDrawer';
 import { SaleReceiptModal } from './components/cart/SaleReceiptModal';
 import { QRScannerModal } from './components/scanner/QRScannerModal';
@@ -40,10 +39,19 @@ import { ProductFormModal } from './components/products/ProductFormModal';
 import { StockAdjustModal } from './components/products/StockAdjustModal';
 import { RegisterShopModal } from './components/auth/RegisterShopModal';
 import { PinLockScreen } from './components/auth/PinLockScreen';
-import { SettingsModal } from './components/settings/SettingsModal';
 import { PWAInstallButton } from './components/pwa/PWAInstallButton';
 import { PWAInstallBanner } from './components/pwa/PWAInstallBanner';
 import { IOSInstallModal } from './components/pwa/IOSInstallModal';
+
+// Chargement différé des écrans et modales secondaires (Point C.16)
+const AssistantScreen = React.lazy(() =>
+  import('./components/screens/AssistantScreen').then((m) => ({ default: m.AssistantScreen }))
+);
+const SettingsModal = React.lazy(() =>
+  import('./components/settings/SettingsModal').then((m) => ({ default: m.SettingsModal }))
+);
+import { AdminScreen } from './components/screens/AdminScreen';
+import { buildAndQueueDailySummary, flushTelemetryQueue } from './services/telemetry';
 import { OfflineIndicator } from './components/pwa/OfflineIndicator';
 import { usePWAInstall } from './hooks/usePWAInstall';
 import { triggerHaptic } from './utils/formatters';
@@ -51,6 +59,11 @@ import { triggerHaptic } from './utils/formatters';
 type ActiveTab = 'vente' | 'produits' | 'credits' | 'bilan' | 'assistant';
 
 export default function App() {
+  const isAdminRoute = typeof window !== 'undefined' && window.location.pathname === '/admin';
+  if (isAdminRoute) {
+    return <AdminScreen />;
+  }
+
   const [activeTab, setActiveTab] = useState<ActiveTab>('vente');
   const [products, setProducts] = useState<ProductWithStock[]>([]);
   const [customers, setCustomers] = useState<CustomerWithBalance[]>([]);
@@ -120,6 +133,9 @@ export default function App() {
       try {
         await initDatabase();
         await refreshAllData();
+        // Suivi d'usage anonyme (Point 2 & 3)
+        await buildAndQueueDailySummary();
+        await flushTelemetryQueue();
       } catch (err) {
         console.error('Erreur initialisation DB:', err);
       } finally {
@@ -127,6 +143,14 @@ export default function App() {
       }
     };
     init();
+
+    const handleOnline = () => {
+      flushTelemetryQueue();
+    };
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
   }, [refreshAllData]);
 
   // Gestion de l'inactivité de 5 minutes (300 000 ms)
@@ -254,6 +278,7 @@ export default function App() {
   const handleSaleCompleted = (sale: Sale) => {
     setLastCompletedSale(sale);
     refreshAllData();
+    buildAndQueueDailySummary().then(() => flushTelemetryQueue()).catch(() => {});
   };
 
   const totalCartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
@@ -406,12 +431,21 @@ export default function App() {
         )}
 
         {activeTab === 'assistant' && (
-          <AssistantScreen
-            products={products}
-            customers={customers}
-            sales={sales}
-            payments={payments}
-          />
+          <React.Suspense
+            fallback={
+              <div className="flex flex-col items-center justify-center p-16 space-y-3">
+                <div className="w-8 h-8 border-3 border-amber-600 border-t-transparent rounded-full animate-spin" />
+                <p className="text-xs font-bold text-slate-500">Chargement de l'assistant...</p>
+              </div>
+            }
+          >
+            <AssistantScreen
+              products={products}
+              customers={customers}
+              sales={sales}
+              payments={payments}
+            />
+          </React.Suspense>
         )}
       </main>
 
@@ -561,17 +595,19 @@ export default function App() {
 
       {/* Settings Modal */}
       {isSettingsOpen && (
-        <SettingsModal
-          isOpen={isSettingsOpen}
-          settings={shopSettings}
-          onClose={() => setIsSettingsOpen(false)}
-          onSettingsUpdated={(newSettings) => setShopSettings(newSettings)}
-          onLockScreen={() => setIsLocked(true)}
-          isInstalled={isInstalled}
-          isIOS={isIOS}
-          onInstall={promptInstall}
-          onShowIOSGuide={() => setShowIOSGuide(true)}
-        />
+        <React.Suspense fallback={null}>
+          <SettingsModal
+            isOpen={isSettingsOpen}
+            settings={shopSettings}
+            onClose={() => setIsSettingsOpen(false)}
+            onSettingsUpdated={(newSettings) => setShopSettings(newSettings)}
+            onLockScreen={() => setIsLocked(true)}
+            isInstalled={isInstalled}
+            isIOS={isIOS}
+            onInstall={promptInstall}
+            onShowIOSGuide={() => setShowIOSGuide(true)}
+          />
+        </React.Suspense>
       )}
 
       {/* Invitation d'installation PWA discrète en bas de l'écran */}

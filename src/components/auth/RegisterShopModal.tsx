@@ -13,6 +13,7 @@ export const RegisterShopModal: React.FC<RegisterShopModalProps> = ({ onShopCrea
   const [shopOwner, setShopOwner] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
+  const [city, setCity] = useState('');
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +52,7 @@ export const RegisterShopModal: React.FC<RegisterShopModalProps> = ({ onShopCrea
         shopOwner: shopOwner.trim(),
         phone: phone.trim(),
         address: address.trim() || 'Guinée',
+        city: city.trim() || undefined,
         pin,
       });
       onShopCreated(created);
@@ -128,6 +130,22 @@ export const RegisterShopModal: React.FC<RegisterShopModalProps> = ({ onShopCrea
                 placeholder="Ex: 622 12 34 56"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
+                className="w-full pl-10 pr-3.5 py-3 text-sm font-semibold bg-slate-50 border border-slate-300 rounded-2xl focus:outline-none focus:border-amber-500 focus:bg-white"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-700 block mb-1">
+              Ville ou préfecture (facultatif)
+            </label>
+            <div className="relative">
+              <MapPin className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Ex: Conakry, Kankan, Labé, Kindia, Nzérékoré..."
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
                 className="w-full pl-10 pr-3.5 py-3 text-sm font-semibold bg-slate-50 border border-slate-300 rounded-2xl focus:outline-none focus:border-amber-500 focus:bg-white"
               />
             </div>

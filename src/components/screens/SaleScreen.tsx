@@ -27,6 +27,7 @@ export const SaleScreen: React.FC<SaleScreenProps> = ({
   // Confirmation modal: "Plus assez d'unités. Ouvrir un carton (+N unités) ?"
   const [promptOpenPackProduct, setPromptOpenPackProduct] = useState<ProductWithStock | null>(null);
   const [isProcessingOpenPack, setIsProcessingOpenPack] = useState(false);
+  const [visibleProductsLimit, setVisibleProductsLimit] = useState(36);
 
   // Categories list
   const categories = useMemo(() => {
@@ -232,7 +233,7 @@ export const SaleScreen: React.FC<SaleScreenProps> = ({
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {filteredProducts.map((product) => {
+          {filteredProducts.slice(0, visibleProductsLimit).map((product) => {
             const isPack = saleFormat === 'pack';
             const hasPack = !!(product.packSize && product.packSize >= 2);
             const packLabel = product.packLabel || 'carton';
@@ -354,6 +355,16 @@ export const SaleScreen: React.FC<SaleScreenProps> = ({
               </div>
             );
           })}
+
+          {filteredProducts.length > visibleProductsLimit && (
+            <button
+              type="button"
+              onClick={() => setVisibleProductsLimit((prev) => prev + 36)}
+              className="col-span-full w-full py-3.5 bg-white border-2 border-amber-200 hover:bg-amber-50 active:scale-98 text-amber-900 font-bold text-xs rounded-2xl shadow-xs transition"
+            >
+              Afficher plus d'articles ({filteredProducts.length - visibleProductsLimit} restants)
+            </button>
+          )}
         </div>
       )}
 

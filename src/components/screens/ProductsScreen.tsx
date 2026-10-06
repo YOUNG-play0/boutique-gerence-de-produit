@@ -18,7 +18,10 @@ import {
 import { ProductWithStock, StockMovement } from '../../types';
 import { formatGNF, formatDateFrench, playSuccessChime, triggerHaptic } from '../../utils/formatters';
 import { deleteProduct, getAllStockMovements, openPack } from '../../services/db';
-import { PrintQRCodesModal } from '../products/PrintQRCodesModal';
+
+const PrintQRCodesModal = React.lazy(() =>
+  import('../products/PrintQRCodesModal').then((m) => ({ default: m.PrintQRCodesModal }))
+);
 
 interface ProductsScreenProps {
   products: ProductWithStock[];
@@ -47,6 +50,7 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
   const [productMovements, setProductMovements] = useState<StockMovement[]>([]);
   const [isOpeningPack, setIsOpeningPack] = useState<string | null>(null);
   const [isPrintQROpen, setIsPrintQROpen] = useState(false);
+  const [visibleProductsLimit, setVisibleProductsLimit] = useState(50);
 
   // Compteurs mis à jour en direct dès que products change
   const totalCount = products.length;
@@ -266,7 +270,8 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
             </p>
           </div>
         ) : (
-          filteredProducts.map((product) => {
+          <>
+            {filteredProducts.slice(0, visibleProductsLimit).map((product) => {
             const hasPack = !!(product.packSize && product.packSize >= 2 && product.packPrice);
             const packLabel = product.packLabel || 'carton';
 
@@ -492,8 +497,19 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
                 </div>
               </div>
             );
-          })
-        )}
+          })}
+
+          {filteredProducts.length > visibleProductsLimit && (
+            <button
+              type="button"
+              onClick={() => setVisibleProductsLimit((prev) => prev + 50)}
+              className="col-span-full w-full py-3.5 bg-white border-2 border-amber-200 hover:bg-amber-50 active:scale-98 text-amber-900 font-bold text-xs rounded-2xl shadow-xs transition"
+            >
+              Afficher 50 produits de plus ({filteredProducts.length - visibleProductsLimit} restants)
+            </button>
+          )}
+        </>
+      )}
       </div>
 
       {/* Modal Historique des Mouvements de Stock */}
@@ -578,11 +594,15 @@ export const ProductsScreen: React.FC<ProductsScreenProps> = ({
       )}
 
       {/* Modal d'impression groupée des codes QR sur feuille A4 */}
-      <PrintQRCodesModal
-        isOpen={isPrintQROpen}
-        products={products}
-        onClose={() => setIsPrintQROpen(false)}
-      />
+      {isPrintQROpen && (
+        <React.Suspense fallback={null}>
+          <PrintQRCodesModal
+            isOpen={isPrintQROpen}
+            products={products}
+            onClose={() => setIsPrintQROpen(false)}
+          />
+        </React.Suspense>
+      )}
     </div>
   );
 };

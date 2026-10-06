@@ -125,16 +125,74 @@ export interface CustomerWithBalance extends Customer {
 
 export interface ShopSettings {
   id?: string;
+  installId?: string; // Identifiant anonyme unique au premier lancement (Point 1)
   shopName: string;
   shopOwner: string;
   phone: string;
   address: string;
+  city?: string; // Ville (facultatif - Point 2 & 4)
   currency: string;
   pinHash?: string; // SHA-256 hash du PIN avec sel
   pinSalt?: string; // Sel aléatoire
   isConfigured: boolean; // false tant que l'écran d'inscription n'a pas été validé
+  telemetryEnabled?: boolean; // Statistiques anonymes d'utilisation (activées par défaut - Point 4)
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface DailyUsageCounters {
+  day: string; // YYYY-MM-DD local
+  scanUses: number;
+  assistantQuestions: number;
+  nbErrors: number;
+}
+
+export interface TelemetryDailySummary {
+  installId: string;
+  shopName: string;
+  city?: string;
+  day: string; // YYYY-MM-DD local
+  appVersion: string;
+  isStandalone: boolean;
+  nbSales: number;
+  nbProducts: number;
+  nbCustomersWithDebt: number;
+  scanUses: number;
+  assistantQuestions: number;
+  packSales: number;
+  nbErrors: number;
+}
+
+export interface AdminBoutiqueItem {
+  installId: string;
+  shopName: string;
+  city?: string;
+  firstActivity: string;
+  lastActivity: string;
+  salesLast7Days: number;
+  nbProducts: number;
+  appVersion: string;
+  inactiveDays: number;
+}
+
+export interface AdminStatsResponse {
+  totalInstalled: number;
+  activeToday: number;
+  activeLast7Days: number;
+  activeLast30Days: number;
+  retention: {
+    days7: number;
+    days14: number;
+    days30: number;
+  };
+  activityCurve: Array<{ day: string; count: number }>;
+  boutiques: AdminBoutiqueItem[];
+  featureUsage: {
+    scanPercentage: number;
+    packPercentage: number;
+    assistantPercentage: number;
+    totalErrors: number;
+  };
 }
 
 export interface AssistantMessage {

@@ -3,7 +3,6 @@
 interface RequestBody {
   question?: string;
   contexte?: unknown;
-  shopId?: string;
   historique?: Array<{ role?: string; content?: string; texte?: string }>;
 }
 
@@ -45,16 +44,26 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: 'Format de requête invalide. Un objet JSON est attendu.' });
   }
 
-  const clientIp =
-    (req.headers['x-forwarded-for'] as string) || req.socket?.remoteAddress || 'client';
-  const body: RequestBody = req.body;
-  const rateLimitKey = (typeof body.shopId === 'string' && body.shopId.slice(0, 80)) || clientIp;
+  // Limite basée uniquement sur l'adresse IP (premier élément de x-forwarded-for) - jamais sur le corps (Point 5)
+  const forwardedHeader = req.headers['x-forwarded-for'];
+  let clientIp = '127.0.0.1';
+  if (typeof forwardedHeader === 'string' && forwardedHeader.trim() !== '') {
+    clientIp = forwardedHeader.split(',')[0].trim();
+  } else if (Array.isArray(forwardedHeader) && forwardedHeader.length > 0) {
+    clientIp = String(forwardedHeader[0]).split(',')[0].trim();
+  } else if (req.socket?.remoteAddress) {
+    clientIp = String(req.socket.remoteAddress).trim();
+  }
+
+  const rateLimitKey = clientIp;
 
   if (isRateLimited(rateLimitKey, 30, 3600000)) {
     return res.status(429).json({
       error: 'Limite de 30 questions par heure atteinte. Veuillez patienter avant de poser une autre question.',
     });
   }
+
+  const body: RequestBody = req.body;
 
   const { question, contexte } = body;
 

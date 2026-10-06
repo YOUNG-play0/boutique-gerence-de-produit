@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Package, Layers, Info, Camera, Image as ImageIcon, RotateCcw, Trash2, RefreshCw } from 'lucide-react';
 import { ProductWithStock } from '../../types';
-import { createProduct, updateProduct } from '../../services/db';
+import { createProduct, updateProduct, convertRemainingPacksToUnits } from '../../services/db';
 import { formatGNF, triggerHaptic } from '../../utils/formatters';
 import { compressProductImage } from '../../utils/imageCompressor';
 
@@ -207,6 +207,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   useEffect(() => {
     if (productToEdit) {
@@ -262,7 +263,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting) return;
+    if (isSubmitting || isSubmittingRef.current) return;
 
     if (!name.trim()) {
       setError('Veuillez entrer le nom du produit.');
@@ -299,7 +300,39 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       }
     }
 
+    // Si l'utilisateur décoche "Je vends aussi en carton" alors que stockPacks > 0 (Point 3)
+    let shouldConvertPacks = false;
+    if (productToEdit && !hasPack && (productToEdit.stockPacks ?? 0) > 0) {
+      const remainingPacks = productToEdit.stockPacks ?? 0;
+      const currentPackSize = productToEdit.packSize || 1;
+      const unitsResulting = remainingPacks * currentPackSize;
+      const confirmed = window.confirm(
+        `Attention : Il reste ${remainingPacks} carton(s) fermés en stock pour « ${productToEdit.name} ».\n\nEn décochant la vente en carton, ces cartons seront automatiquement convertis en ${unitsResulting} unités seules.\n\nConfirmez-vous cette opération ?`
+      );
+      if (!confirmed) {
+        return;
+      }
+      shouldConvertPacks = true;
+    }
+
+    // Si le nombre d'unités par carton change alors que stockPacks > 0, affiche un avertissement avant d'enregistrer (Point 3)
+    if (
+      productToEdit &&
+      hasPack &&
+      (productToEdit.stockPacks ?? 0) > 0 &&
+      productToEdit.packSize !== undefined &&
+      Number(packSize) !== productToEdit.packSize
+    ) {
+      const proceed = window.confirm(
+        `Avertissement : Vous modifiez le nombre d'unités par carton (de ${productToEdit.packSize} à ${packSize} unités), alors qu'il reste actuellement ${productToEdit.stockPacks} carton(s) fermés en stock.\n\nSouhaitez-vous continuer ?`
+      );
+      if (!proceed) {
+        return;
+      }
+    }
+
     try {
+      isSubmittingRef.current = true;
       setIsSubmitting(true);
       setError(null);
 
@@ -320,6 +353,9 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       };
 
       if (productToEdit) {
+        if (shouldConvertPacks) {
+          await convertRemainingPacksToUnits(productToEdit.id);
+        }
         await updateProduct(productToEdit.id, productPayload);
       } else {
         const initialStockData = hasPack
@@ -340,6 +376,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Erreur lors de la sauvegarde');
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -414,6 +451,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             <div className="relative">
               <input
                 type="number"
+                inputMode="numeric"
                 step="1"
                 min="0"
                 required
@@ -484,6 +522,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                     </label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       min="2"
                       required={hasPack}
                       value={packSize}
@@ -501,6 +540,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                     <div className="relative">
                       <input
                         type="number"
+                        inputMode="numeric"
                         min="0"
                         step="1"
                         required={hasPack}
@@ -570,6 +610,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                       </label>
                       <input
                         type="number"
+                        inputMode="numeric"
                         min="0"
                         value={initialPacks}
                         onChange={(e) =>
@@ -587,6 +628,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                       </label>
                       <input
                         type="number"
+                        inputMode="numeric"
                         min="0"
                         value={initialUnits}
                         onChange={(e) =>
@@ -606,6 +648,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                   </label>
                   <input
                     type="number"
+                    inputMode="numeric"
                     min="0"
                     value={initialSingleStock}
                     onChange={(e) =>
@@ -628,6 +671,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
               </label>
               <input
                 type="number"
+                inputMode="numeric"
                 min="0"
                 value={alertThreshold}
                 onChange={(e) => setAlertThreshold(Math.max(0, parseInt(e.target.value) || 0))}
@@ -642,6 +686,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   min="0"
                   placeholder="Ex: 2"
                   value={alertThresholdPacks}
@@ -675,7 +720,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-4 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-amber-600/30 transition flex items-center justify-center gap-2"
+              className="w-full py-4 bg-amber-600 hover:bg-amber-700 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none text-white font-black text-sm rounded-2xl shadow-lg shadow-amber-600/30 transition flex items-center justify-center gap-2"
             >
               <span>{productToEdit ? 'Enregistrer les modifications' : 'Créer le produit'}</span>
             </button>

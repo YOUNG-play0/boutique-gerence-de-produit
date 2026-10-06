@@ -15,6 +15,7 @@ import {
 import { ProductWithStock, CustomerWithBalance, Sale, CreditPayment } from '../../types';
 import { formatGNF, triggerHaptic } from '../../utils/formatters';
 import { generateUUID } from '../../utils/crypto';
+import { recordAssistantQuestion } from '../../services/telemetry';
 
 interface AssistantScreenProps {
   products: ProductWithStock[];
@@ -297,6 +298,7 @@ export const AssistantScreen: React.FC<AssistantScreenProps> = ({
 
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
+    recordAssistantQuestion().catch(() => {});
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {

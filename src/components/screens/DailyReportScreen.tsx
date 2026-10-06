@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Sale, ProductWithStock, CreditPayment } from '../../types';
 import { formatGNF, formatDateFrench } from '../../utils/formatters';
+import { getCustomersWithBalance } from '../../services/db';
 
 interface DailyReportScreenProps {
   sales: Sale[];
@@ -163,6 +164,25 @@ export const DailyReportScreen: React.FC<DailyReportScreenProps> = ({
 
   const handleCancelSaleAction = async (sale: Sale) => {
     if (!onCancelSale) return;
+
+    if (sale.paymentType === 'credit' && sale.customerId) {
+      try {
+        const custs = await getCustomersWithBalance();
+        const cust = custs.find((c) => c.id === sale.customerId);
+        if (cust) {
+          const excess = sale.totalAmount - cust.currentDebt;
+          if (excess > 0) {
+            const proceed = window.confirm(
+              `Avertissement : Ce client a déjà payé ${formatGNF(excess)} de plus que ce qu'il doit.\n\nConfirmez-vous tout de même l'annulation de cette vente ?`
+            );
+            if (!proceed) return;
+          }
+        }
+      } catch (checkErr) {
+        console.warn('Impossible de vérifier le solde du client avant annulation', checkErr);
+      }
+    }
+
     if (
       !window.confirm(
         `Annuler la vente de ${formatGNF(sale.totalAmount)} ?\n\nLes stocks correspondants (cartons fermés et/ou unités seules) seront automatiquement réinjectés.`

@@ -4,6 +4,29 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Boutique Guinée - Caisse & Stock</title>
+    <script>
+      (function() {
+        const origError = console.error;
+        console.error = function(...args) {
+          const msg = args.map(a => String(a?.message || a)).join(' ');
+          if (
+            msg.includes('[vite]') &&
+            (msg.includes("reading 'send'") || msg.includes('websocket') || msg.includes('WebSocket'))
+          ) {
+            return;
+          }
+          origError.apply(console, args);
+        };
+        window.addEventListener('unhandledrejection', (event) => {
+          if (
+            event.reason &&
+            String(event.reason).includes("reading 'send'")
+          ) {
+            event.preventDefault();
+          }
+        });
+      })();
+    </script>
     <meta name="description" content="Application mobile hors-ligne de caisse, scan QR, stock automatique, carnet de crédit et bilan journalier en Franc Guinéen (GNF)." />
     <meta property="og:title" content="Boutique Guinée - Caisse & Stock" />
     <meta property="og:description" content="Application mobile hors-ligne de caisse, scan QR, stock automatique, carnet de crédit et bilan journalier en Franc Guinéen (GNF)." />
