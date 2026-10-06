@@ -427,7 +427,12 @@ export default function App() {
         )}
 
         {activeTab === 'bilan' && (
-          <DailyReportScreen sales={sales} payments={payments} products={products} />
+          <DailyReportScreen
+            sales={sales}
+            payments={payments}
+            products={products}
+            onCancelSale={handleCancelSale}
+          />
         )}
 
         {activeTab === 'assistant' && (

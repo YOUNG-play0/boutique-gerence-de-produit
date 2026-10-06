@@ -1134,6 +1134,15 @@ export async function getSalesForCustomer(customerId: string): Promise<Sale[]> {
   return db.getAllFromIndex('sales', 'by-customer', customerId);
 }
 
+/**
+ * Récupère les ventes dans une plage de dates en utilisant l'index 'by-date' (Point 4)
+ */
+export async function getSalesByDateRange(startDateIso: string, endDateIso: string): Promise<Sale[]> {
+  const db = await getDB();
+  const range = IDBKeyRange.bound(startDateIso, endDateIso);
+  return db.getAllFromIndex('sales', 'by-date', range);
+}
+
 // ----------------- CLIENTS & CRÉDITS (POINT A.4, A.6 & A.7) -----------------
 
 export async function getAllCustomers(): Promise<Customer[]> {
@@ -1424,6 +1433,15 @@ export async function getCreditPaymentsForCustomer(customerId: string): Promise<
 export async function getAllCreditPayments(): Promise<CreditPayment[]> {
   const db = await getDB();
   return db.getAll('credit_payments');
+}
+
+/**
+ * Récupère les paiements de crédit dans une plage de dates en utilisant l'index 'by-date' (Point 4)
+ */
+export async function getCreditPaymentsByDateRange(startDateIso: string, endDateIso: string): Promise<CreditPayment[]> {
+  const db = await getDB();
+  const range = IDBKeyRange.bound(startDateIso, endDateIso);
+  return db.getAllFromIndex('credit_payments', 'by-date', range);
 }
 
 // ----------------- ASSISTANT IA - HISTORIQUE DES CONVERSATIONS -----------------

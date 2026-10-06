@@ -76,11 +76,11 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: 'La question ne peut pas être vide.' });
   }
 
-  if (cleanQuestion.length > 500) {
-    return res.status(400).json({ error: 'La question ne doit pas dépasser 500 caractères.' });
+  if (cleanQuestion.length > 1000) {
+    return res.status(400).json({ error: 'La question ne doit pas dépasser 1000 caractères.' });
   }
 
-  // Validation du contexte chiffré (taille maximale de 50 Ko pour éviter les surcharges)
+  // Validation du contexte chiffré (taille maximale ajustée à 75 Ko pour accepter les enrichissements sans surcharges)
   let serializedContext = '{}';
   if (contexte) {
     if (typeof contexte !== 'object' || Array.isArray(contexte)) {
@@ -88,8 +88,8 @@ export default async function handler(req: any, res: any) {
     }
     try {
       serializedContext = JSON.stringify(contexte);
-      if (serializedContext.length > 50000) {
-        return res.status(400).json({ error: 'Le volume des données de contexte est trop volumineux (maximum 50 Ko).' });
+      if (serializedContext.length > 75000) {
+        return res.status(400).json({ error: 'Le volume des données de contexte est trop volumineux (maximum 75 Ko).' });
       }
     } catch {
       return res.status(400).json({ error: 'Impossible de sérialiser le contexte fourni.' });
@@ -105,7 +105,7 @@ export default async function handler(req: any, res: any) {
   }
 
   const systemPrompt =
-    "Tu es l'assistant d'une petite boutique en Guinée. Réponds en français simple et court. Utilise UNIQUEMENT les chiffres fournis dans le contexte. Si l'information manque, dis-le. Ne fais aucun calcul : cite les chiffres tels quels. Monnaie : GNF. Les chiffres du contexte actuel sont toujours prioritaires sur ceux cités dans les messages précédents, qui peuvent être périmés.";
+    "Tu es l'assistant d'une petite boutique en Guinée. Réponds en français simple, poli et court. Tu ne connais pas les prix d'achat ni les bénéfices : si on te les demande, explique-le simplement. Utilise uniquement les chiffres du contexte. Si l'information manque, dis-le. Ne fais aucun calcul : cite les chiffres tels quels. Monnaie : GNF. Les chiffres du contexte actuel sont toujours prioritaires sur ceux cités dans les messages précédents, qui peuvent être périmés. Pour une demande de rappel client, rédige un message court, poli et bienveillant, directement prêt à envoyer sur WhatsApp.";
 
   const userPrompt = `Voici les données chiffrées de la boutique :\n${serializedContext}\n\nQuestion du gérant de la boutique :\n${cleanQuestion}`;
 
